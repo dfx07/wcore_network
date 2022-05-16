@@ -1,203 +1,170 @@
-#include <array>
-#include <cstdlib>
-#include <iostream>
-#include <memory>
-#include <type_traits>
-#include <utility>
-#include <boost/asio.hpp>
+﻿#include "GLNetwork.h"
+#include <string>
 
-using boost::asio::ip::tcp;
 
-// Class to manage the memory to be used for handler-based custom allocation.
-// It contains a single block of memory which may be returned for allocation
-// requests. If the memory is in use when an allocation request is made, the
-// allocator delegates allocation to the global heap.
-class handler_memory
+#define ADDRESS     "127.0.0.1"
+#define PORT        "9999"
+
+typedef asio::io_service                         network_service;
+typedef asio::ip::tcp::socket                    tcp_socket;
+typedef boost::shared_ptr<asio::ip::tcp::socket> tcp_socket_ptr;
+typedef asio::ip::tcp::acceptor                  tcp_acceptor;
+typedef asio::ip::tcp::endpoint                  tcp_endpoint;
+typedef boost::system::error_code                tcp_error;
+
+
+
+class Server
 {
 public:
-    handler_memory()
-        : in_use_(false)
+    Server(const Server&) = delete;
+    Server& operator=(const Server&) = delete;
+
+    // Construct ther server to listen on specified TCP address and port
+    explicit Server() :m_acceptor(*GetNetworkService())
     {
+        // TODO: Contructor
     }
 
-    handler_memory(const handler_memory&) = delete;
-    handler_memory& operator=(const handler_memory&) = delete;
-
-    void* allocate(std::size_t size)
+    void SetInfo(const string& address, const string& port)
     {
-        if (!in_use_ && size < sizeof(storage_))
-        {
-            in_use_ = true;
-            return &storage_;
-        }
-        else
-        {
-            return ::operator new(size);
-        }
-    }
-
-    void deallocate(void* pointer)
-    {
-        if (pointer == &storage_)
-        {
-            in_use_ = false;
-        }
-        else
-        {
-            ::operator delete(pointer);
-        }
+        m_address = address;
+        m_port    = port;
     }
 
 private:
-    // Storage space used for handler-based custom memory allocation.
-    typename std::aligned_storage<1024>::type storage_;
+    void start_accept()
+    {
+        network_service* service =  GetNetworkService();
+        m_socket = tcp_socket_ptr(new tcp_socket(*service));
+        m_acceptor.async_accept(*m_socket, boost::bind(&Server::handle_accept, this, m_socket,
+                                                       boost::asio::placeholders::error));
+    }
 
-    // Whether the handler-based custom allocation storage has been used.
-    bool in_use_;
-};
+    void handle_accept(tcp_socket_ptr sock, const tcp_error& error)
+    {
+        if (!error)
+        {
 
-// The allocator to be associated with the handler objects. This allocator only
-// needs to satisfy the C++11 minimal allocator requirements.
-template <typename T>
-class handler_allocator
-{
+        }
+        this->start_accept();
+    }
+
+    void handle_read()
+    {
+
+    }
+
+    static void listen_thread()
+    {
+        network_service* service =  GetNetworkService();
+        service->run();
+    }
+
+
+    void do_async_read()
+    {
+
+    }
 public:
-    using value_type = T;
-
-    explicit handler_allocator(handler_memory& mem)
-        : memory_(mem)
+    void Run()
     {
+        // Khởi tạo cổng để lắng nghe các kết nối đến
+        auto endpoint = tcp_endpoint( asio::ip::address::from_string(m_address), std::atoi(m_port.c_str()));
+        m_acceptor.open( endpoint.protocol());
+        m_acceptor.set_option( boost::asio::ip::tcp::acceptor::reuse_address( true ) );
+        m_acceptor.bind(endpoint);
+        m_acceptor.listen();
+
+        this->start_accept();
+
+        m_threads.create_thread(listen_thread);
     }
 
-    template <typename U>
-    handler_allocator(const handler_allocator<U>& other) noexcept
-        : memory_(other.memory_)
+    void Stop()
     {
-    }
 
-    bool operator==(const handler_allocator& other) const noexcept
-    {
-        return &memory_ == &other.memory_;
-    }
-
-    bool operator!=(const handler_allocator& other) const noexcept
-    {
-        return &memory_ != &other.memory_;
-    }
-
-    T* allocate(std::size_t n) const
-    {
-        return static_cast<T*>(memory_.allocate(sizeof(T) * n));
-    }
-
-    void deallocate(T* p, std::size_t /*n*/) const
-    {
-        return memory_.deallocate(p);
     }
 
 private:
-    template <typename> friend class handler_allocator;
-
-    // The underlying memory.
-    handler_memory& memory_;
-};
-
-class session
-    : public std::enable_shared_from_this<session>
-{
-public:
-    session(tcp::socket socket)
-        : socket_(std::move(socket))
+    static network_service* GetNetworkService()
     {
-    }
-
-    void start()
-    {
-        do_read();
+        static network_service service;
+        return &service;
     }
 
 private:
-    void do_read()
-    {
-        auto self(shared_from_this());
-        socket_.async_read_some(boost::asio::buffer(data_),
-            boost::asio::bind_allocator(
-                handler_allocator<int>(handler_memory_),
-                [this, self](boost::system::error_code ec, std::size_t length)
-        {
-            if (!ec)
-            {
-                do_write(length);
-            }
-        }));
-    }
+    string           m_address;
+    string           m_port;
 
-    void do_write(std::size_t length)
-    {
-        auto self(shared_from_this());
-        boost::asio::async_write(socket_, boost::asio::buffer(data_, length),
-            boost::asio::bind_allocator(
-                handler_allocator<int>(handler_memory_),
-                [this, self](boost::system::error_code ec, std::size_t /*length*/)
-        {
-            if (!ec)
-            {
-                do_read();
-            }
-        }));
-    }
+    thread_group     m_threads;
 
-    // The socket used to communicate with the client.
-    tcp::socket socket_;
-
-    // Buffer used to store data received from the client.
-    std::array<char, 1024> data_;
-
-    // The memory to use for handler-based custom memory allocation.
-    handler_memory handler_memory_;
+    // Acceptor used to listen for incoming connections.
+    tcp_acceptor     m_acceptor;
+    tcp_socket_ptr   m_socket;
 };
 
-class server
+
+
+//void start_accept(tcp_socket_ptr);
+//
+//asio::io_service service;
+//
+//asio::ip::tcp::endpoint ep( asio::ip::tcp::v4(), PORT);
+//
+//// Create socket pointer instead of socket
+//tcp_socket_ptr sock(new tcp_socket(service));
+//tcp_acceptor   acc(service, ep);
+//thread_group threads;
+//
+//
+//void handle_accept(tcp_socket_ptr sock, const boost::system::error_code& err) {
+//    if ( err) return;
+//    MessageBox(0, "sdfsdf", "thong bao", 0);
+//    // at this point, you can read/write to the socket
+//    tcp_socket_ptr sock1(new tcp_socket(service));
+//    start_accept(sock1);
+//}
+//
+//void start_accept(tcp_socket_ptr sock) {
+//    acc.async_accept(*sock, boost::bind( handle_accept, sock, _1) );
+//}
+//
+//void listen_thread()
+//{
+//    service.run();
+//}
+//
+//void run_service_thread()
+//{
+//    //start_accept(sock);
+//    //service.run();
+//
+//    threads.create_thread(listen_thread);
+//}
+
+
+int main()
 {
-public:
-    server(boost::asio::io_context& io_context, short port)
-        : acceptor_(io_context, tcp::endpoint(tcp::v4(), port))
+    //boost::thread(run_service_thread);
+    //acc.async_accept(*sock, boost::bind( handle_accept, sock, _1) );
+    //run_service_thread();
+
+
+    Server server;
+    server.SetInfo(ADDRESS, PORT);
+
+    server.Run();
+
+
+    while (true)
     {
-        do_accept();
+        cout << "write to text" << endl;
+
+        Sleep(1000);
     }
 
-private:
-    void do_accept()
-    {
-        acceptor_.async_accept(
-            [this](boost::system::error_code ec, tcp::socket socket)
-        {
-            if (!ec)
-            {
-                std::make_shared<session>(std::move(socket))->start();
-            }
-
-            do_accept();
-        });
-    }
-
-    tcp::acceptor acceptor_;
-};
-
-int main(int argc, char* argv[])
-{
-    try
-    {
-        argv[1] = "1998";
-
-        boost::asio::io_context io_context;
-        server s(io_context, std::atoi(argv[1]));
-        io_context.run();
-    }
-    catch (std::exception& e)
-    {
-        std::cerr << "Exception: " << e.what() << "\n";
-    }
-
+    getchar();
     return 0;
+
 }
