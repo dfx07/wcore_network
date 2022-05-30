@@ -13,14 +13,13 @@ int main()
 
     server.Start();
 
-
+    int a = 0;
     while (true)
     {
-        cout << "write to text" << endl;
+        cout << "[Server][" << a++ << "] : >>" << endl;
 
         Sleep(1000);
     }
 
-    getchar();
     return 0;
 }

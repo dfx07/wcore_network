@@ -286,10 +286,11 @@ public:
         m_tcp_session = tcp_session::Create(m_service);
     }
 
-    void StartConnect(const string& hostname, const string& port)
+    void Connect(const string& hostname, const string& port, const int& ithread = 1)
     {
         m_address = hostname;
         m_port    = port;
+        m_nthread = ithread;
 
         // Use synchronized
         //DNS dns;
@@ -302,16 +303,41 @@ public:
 
         // Use asynchronous 
         tcp_resolver_query query(hostname, port);
-        m_resolver.async_resolve(query, boost::bind(&Client::HandleResolve,
-                                 this, asio::placeholders::error,
+        m_resolver.async_resolve(query, boost::bind(&Client::HandleResolve, this,
+                                 asio::placeholders::error,
                                  asio::placeholders::iterator));
+        m_service.run();
+    }
+
+    void Start()
+    {
+        //boost::thread_group threads;
+        //threads.create_thread(boost::bind(&Client::CreateThread, this));
+    }
+
+    void Stop()
+    {
+
     }
 private:
+    void CreateThread()
+    {
+        // Create a pool of threads to run all of the io_services.
+        for (std::size_t i = 0; i< m_nthread; ++i) {
+            m_threads.create_thread(boost::bind(&asio::io_service::run, &m_service));
+        }
+
+        // Wait for all threads in the pool to exit.
+        m_threads.join_all();
+    }
+private:
+
+
     void HandleResolve(const tcp_error& err, tcp_resolver_iter iter)
     {
         if (!err)
         {
-            tcp_socket_ptr socket = tcp_socket_ptr(&m_tcp_session->GetSocket());
+            tcp_socket_ptr socket = (tcp_socket_ptr)&m_tcp_session->GetSocket();
 
             socket->async_connect(*iter, boost::bind(&Client::HandleConnect,
                 this, asio::placeholders::error,
@@ -363,12 +389,17 @@ private:
 
 private:
     network_service     m_service;
+    tcp_resolver        m_resolver;
 
     string              m_address;
     string              m_port;
+
+    thread_group        m_threads;
+    int                 m_nthread;
+    
     tcp_session_ptr     m_tcp_session;
 
-    tcp_resolver        m_resolver;
+
     tcp_streambuf       m_request ;
     tcp_streambuf       m_response;
 };
