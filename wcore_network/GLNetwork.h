@@ -51,10 +51,88 @@ typedef asio::ip::tcp::resolver                  tcp_resolver;
 typedef asio::ip::tcp::resolver::query           tcp_resolver_query;
 typedef asio::ip::tcp::resolver::iterator        tcp_resolver_iter;
 typedef boost::asio::streambuf                   tcp_streambuf;
+#define tcp_buffer(ptr, _size)                   boost::asio::buffer(ptr, _size);
 
 
 
 typedef asio::ip::udp::endpoint                  udp_endpoint;
+
+struct NetPackage
+{
+public:
+    enum { MAX_HEADER_LENGTH  =  12  };
+    enum { MAX_BODY_LENGTH    =  512 };
+    enum { MAX_PACKAGE_LENGTH = MAX_HEADER_LENGTH + MAX_BODY_LENGTH };
+
+private:
+    // struct :     [header] + [body]
+    char            m_data[MAX_HEADER_LENGTH + MAX_BODY_LENGTH];
+    unsigned int    m_body_length;
+
+private:
+    void clear_header()
+    {
+        memset(&m_data[0], 0, MAX_HEADER_LENGTH);
+    }
+
+    void clear_body()
+    {
+        memset(&m_data[MAX_HEADER_LENGTH], 0, MAX_BODY_LENGTH);
+        m_body_length = 0;
+    }
+
+public:
+    NetPackage(): m_body_length(0)
+    {
+        memset(&m_data[0], 0, MAX_HEADER_LENGTH + MAX_BODY_LENGTH);
+    }
+
+    // Get of length of package
+    const unsigned int length() const
+    {
+        return MAX_HEADER_LENGTH + m_body_length;
+    }
+    unsigned int length()
+    {
+        return MAX_HEADER_LENGTH + m_body_length;
+    }
+
+    // Get data pointer exactlly package
+    const void* data() const
+    {
+        return (void*)&m_data[0];
+    }
+
+    void* data()
+    {
+        return (void*)&m_data[0];
+    }
+
+    // Set header and body data package
+    void set_body_data(void* _data, const unsigned int _size) const = delete;
+    void set_body_data(void* _data, const unsigned int _size)
+    {
+        int _sizecp = (_size <= MAX_BODY_LENGTH) ? _size : MAX_BODY_LENGTH;
+        strncpy(&m_data[MAX_HEADER_LENGTH], (char*)_data, _sizecp);
+
+        m_body_length = _sizecp;
+    }
+
+    void set_header_data(void* _data, const unsigned int _size) const = delete;
+    void set_header_data(void* _data, const unsigned int _size)
+    {
+        int _sizecp = (_size <= MAX_HEADER_LENGTH) ? _size : MAX_HEADER_LENGTH;
+        strncpy(&m_data[0], (char*)_data, _sizecp);
+    }
+
+    // Clear all data in package
+    void clear()
+    {
+        this->clear_header();
+        this->clear_body();
+    }
+};
+
 
 // Note : Use boost::enable_shared_from_this instead of std::enable_shared_from_this
 // if you use this, the program crashed
@@ -76,7 +154,7 @@ public:
 private:
     void Read()
     {
-        boost::asio::async_read(m_socket, boost::asio::buffer(m_buff, MAX_BUFF),
+        boost::asio::async_read(m_socket, boost::asio::buffer(m_packageBuff.data(), m_packageBuff.MAX_PACKAGE_LENGTH),
                                 boost::bind(&tcp_session::Handle_Read, shared_from_this(),
                                             boost::asio::placeholders::error,
                                             boost::asio::placeholders::bytes_transferred));
@@ -110,7 +188,7 @@ private:
         {
             //TODO hanle read
             std::cout << ":receive:" << bytes_transferred << std::endl;
-            std::cout << " >> " << m_buff << std::endl;
+            std::cout << " >> " << m_packageBuff.data() << std::endl;
         }
         else
         {
@@ -140,7 +218,7 @@ public:
 private:
     tcp_socket      m_socket;
     network_service m_service;
-    char            m_buff[MAX_BUFF];
+    NetPackage      m_packageBuff;
     std::string     m_message;
 };
 
@@ -306,18 +384,24 @@ public:
         m_resolver.async_resolve(query, boost::bind(&Client::HandleResolve, this,
                                  asio::placeholders::error,
                                  asio::placeholders::iterator));
-        m_service.run();
     }
 
     void Start()
     {
-        //boost::thread_group threads;
-        //threads.create_thread(boost::bind(&Client::CreateThread, this));
+        boost::thread_group threads;
+        threads.create_thread(boost::bind(&Client::CreateThread, this));
     }
 
     void Stop()
     {
 
+    }
+
+    void Write(const NetPackage& pack)
+    {
+        boost::asio::async_write(m_tcp_session->GetSocket(), asio::buffer(pack.data(), pack.length()),
+                                 boost::bind(&Client::HandleWriteRequest, this,
+                                             boost::asio::placeholders::error));
     }
 private:
     void CreateThread()
@@ -342,6 +426,9 @@ private:
             socket->async_connect(*iter, boost::bind(&Client::HandleConnect,
                 this, asio::placeholders::error,
                 ++iter));
+
+            // Don't understand why not exist it doesn't crash
+            m_service.run();
         }
         else
         {
@@ -378,13 +465,13 @@ private:
     {
         if (!err)
         {
-
+            std::cout << "[User send] :" << std::endl;
+            this->Write();
         }
-    }
-
-    void HandleRead()
-    {
-
+        else
+        {
+            std::cout << "Error : " << err.what() << std::endl;
+        }
     }
 
 private:
