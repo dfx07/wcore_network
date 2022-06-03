@@ -20,9 +20,9 @@ int main()
 
     while (true)
     {
-        cout << "[Client] : >>" << endl;
+        //cout << "[Client] : >>" << endl;
 
-        client.Write(pack);
+        //client.Write(pack);
 
         Sleep(1000);
     }

@@ -57,6 +57,13 @@ typedef boost::asio::streambuf                   tcp_streambuf;
 
 typedef asio::ip::udp::endpoint                  udp_endpoint;
 
+enum class IPVersion
+{
+    None,
+    V4,
+    V6
+};
+
 struct NetPackage
 {
 public:
@@ -108,12 +115,18 @@ public:
         return (void*)&m_data[0];
     }
 
+    // Get message body to string 
+    string data_body_to_string()
+    {
+        return string(&m_data[MAX_HEADER_LENGTH]);
+    }
+
     // Set header and body data package
     void set_body_data(void* _data, const unsigned int _size) const = delete;
     void set_body_data(void* _data, const unsigned int _size)
     {
         int _sizecp = (_size <= MAX_BODY_LENGTH) ? _size : MAX_BODY_LENGTH;
-        strncpy(&m_data[MAX_HEADER_LENGTH], (char*)_data, _sizecp);
+        strncpy_s(&m_data[MAX_HEADER_LENGTH], _sizecp, (char*)_data, _sizecp);
 
         m_body_length = _sizecp;
     }
@@ -122,7 +135,7 @@ public:
     void set_header_data(void* _data, const unsigned int _size)
     {
         int _sizecp = (_size <= MAX_HEADER_LENGTH) ? _size : MAX_HEADER_LENGTH;
-        strncpy(&m_data[0], (char*)_data, _sizecp);
+        strncpy_s(&m_data[0], _sizecp, (char*)_data, _sizecp);
     }
 
     // Clear all data in package
@@ -134,194 +147,10 @@ public:
 };
 
 
-// Note : Use boost::enable_shared_from_this instead of std::enable_shared_from_this
-// if you use this, the program crashed
-class tcp_session: public boost::enable_shared_from_this<tcp_session>
-{
-private:
-    // Không cho sử dụng cái này cho dễ quản lý
-    tcp_session(network_service& service): m_socket(service)
-    {
-
-    }
-
-public:
-    static tcp_session_ptr Create(network_service& service)
-    {
-        return tcp_session_ptr(new tcp_session(service));
-    }
-
-private:
-    void Read()
-    {
-        boost::asio::async_read(m_socket, boost::asio::buffer(m_packageBuff.data(), m_packageBuff.MAX_PACKAGE_LENGTH),
-                                boost::bind(&tcp_session::Handle_Read, shared_from_this(),
-                                            boost::asio::placeholders::error,
-                                            boost::asio::placeholders::bytes_transferred));
-    }
-
-    void Write()
-    {
-        boost::asio::async_write(m_socket, boost::asio::buffer(m_message),
-                                 boost::bind(&tcp_session::Handle_Write, shared_from_this(),
-                                             boost::asio::placeholders::error,
-                                             boost::asio::placeholders::bytes_transferred));
-    }
-
-
-    void Handle_Write(const boost::system::error_code& error, size_t bytes_transferred)
-    {
-        if (!error)
-        {
-            // TODO hanlde write
-            std::cout << "Server sent Hello message!" << std::endl;
-        }
-        else
-        {
-            std::cerr << "ERROR: " << error.what() << std::endl;
-        }
-    }
-
-    void Handle_Read(const boost::system::error_code& error, size_t bytes_transferred)
-    {
-        if (!error)
-        {
-            //TODO hanle read
-            std::cout << ":receive:" << bytes_transferred << std::endl;
-            std::cout << " >> " << m_packageBuff.data() << std::endl;
-        }
-        else
-        {
-            std::cerr << "ERROR:" << error.what() << std::endl;
-        }
-    }
-
-public:
-
-    void Start()
-    {
-        this->Read();
-        this->Write();
-    }
-
-    void Connect()
-    {
-
-    }
-
-public:
-    tcp_socket&    GetSocket()        { return m_socket; }
-
-    // ?? not understand why ??
-    //tcp_socket_ptr GetSocketPointer() { return tcp_socket_ptr(&m_socket); }
-
-private:
-    tcp_socket      m_socket;
-    network_service m_service;
-    NetPackage      m_packageBuff;
-    std::string     m_message;
-};
-
-
-class Server
+class NetDNS
 {
 public:
-    Server(const Server&) = delete;
-    Server& operator=(const Server&) = delete;
-
-    // Construct ther server to listen on specified TCP address and port
-    explicit Server(): m_acceptor{ asio::make_strand(m_service)}
-    {
-        // TODO: Contructor
-    }
-
-    void Config(const string& address, const string& port, const int& thread_size =1)
-    {
-        m_address      = address;
-        m_port         = port;
-        m_threads_size = thread_size;
-    }
-
-private:
-    void StartAccept()
-    {
-        tcp_session_ptr new_tcp_session = tcp_session::Create(m_service);
-
-        m_acceptor.async_accept(new_tcp_session->GetSocket(),
-                                boost::bind(&Server::HandleAccept, this, new_tcp_session,
-                                boost::asio::placeholders::error));
-    }
-
-    void HandleAccept(tcp_session_ptr session, const tcp_error& error)
-    {
-        if (!error)
-        {
-            session->Start();
-        }
-        this->StartAccept();
-    }
-
-    void CreateThread()
-    {
-        // Create a pool of threads to run all of the io_services.
-        for (std::size_t i = 0; i< m_threads_size; ++i) {
-            m_threads.create_thread(boost::bind(&asio::io_service::run, &m_service));
-        }
-
-        // Wait for all threads in the pool to exit.
-        m_threads.join_all();
-    }
-
-    void StartThread()
-    {
-        boost::thread_group threads;
-        threads.create_thread(boost::bind(&Server::CreateThread, this));
-    }
-
-public:
-    void Start()
-    {
-        // Initialize the socket and listen to the incoming connection
-        auto endpoint = tcp_endpoint( asio::ip::address::from_string(m_address), std::atoi(m_port.c_str()));
-        m_acceptor.open(endpoint.protocol());
-        m_acceptor.set_option( boost::asio::ip::tcp::acceptor::reuse_address(true));
-        m_acceptor.bind(endpoint);
-        m_acceptor.listen();
-
-        this->StartAccept();
-        this->StartThread();
-    }
-
-    void Stop()
-    {
-
-    }
-
-private:
-
-private:
-    string                      m_address;
-    string                      m_port;
-
-    thread_group                m_threads;
-    int                         m_threads_size;
-
-    // Acceptor used to listen for incoming connections.
-    network_service             m_service;
-    tcp_acceptor                m_acceptor;
-};
-
-enum class IPVersion
-{
-    None,
-    V4,
-    V6
-};
-
-class DNS
-{
-public:
-    DNS() :m_resolver(asio::make_strand(m_service))
+    NetDNS() :m_resolver(asio::make_strand(m_service))
     {
 
     }
@@ -356,7 +185,256 @@ private:
     tcp_resolver        m_resolver;
 };
 
-class Client
+
+class NetInterface
+{
+public:
+    virtual void HandleWrite(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred) = 0;
+    virtual void HandleRead (const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred) = 0;
+    virtual void HandleClose(const tcp_session_ptr session)
+    {
+        return;
+    }
+};
+
+
+// Note : Use boost::enable_shared_from_this instead of std::enable_shared_from_this
+// if you use this, the program crashed
+class tcp_session: public boost::enable_shared_from_this<tcp_session>
+{
+private:
+    // Không cho sử dụng cái này cho dễ quản lý
+    tcp_session(network_service& service): m_socket(service)
+    {
+        m_isOpen = false;
+    }
+
+public:
+    static tcp_session_ptr Create(network_service& service)
+    {
+        return tcp_session_ptr(new tcp_session(service));
+    }
+
+public:
+
+    bool IsOpen() { return m_isOpen; }
+
+    void Read()
+    {
+        if (!m_isOpen) return;
+
+        boost::asio::async_read(m_socket, boost::asio::buffer(m_packageBuff.data(), m_packageBuff.MAX_PACKAGE_LENGTH),
+                                boost::bind(&tcp_session::Handle_Read_Com, shared_from_this(),
+                                            boost::asio::placeholders::error,
+                                            boost::asio::placeholders::bytes_transferred));
+    }
+
+    void Write(const NetPackage& pack)
+    {
+        if (!m_isOpen) return;
+
+        boost::asio::async_write(m_socket, boost::asio::buffer(pack.data(), m_packageBuff.MAX_PACKAGE_LENGTH),
+                                 boost::bind(&tcp_session::Handle_Write_Com, shared_from_this(),
+                                             boost::asio::placeholders::error,
+                                             boost::asio::placeholders::bytes_transferred));
+    }
+
+private:
+
+    // Look forward to general handling here
+    void Handle_Write_Com(const tcp_error& error, size_t bytes_transferred)
+    {
+        if (!error)
+        {
+            // TODO : Hanlde write common
+            if(m_instance) m_instance->HandleWrite(shared_from_this(), error, bytes_transferred);
+        }
+        else
+        {
+            std::cerr << "ERROR: " << error.what() << std::endl;
+            this->Close();
+        }
+    }
+
+    void Handle_Read_Com(const boost::system::error_code& error, size_t bytes_transferred)
+    {
+        if (!error)
+        {
+            // Hanle for a reveice package 
+            if (m_instance)
+            {
+                m_instance->HandleRead(shared_from_this(), error, bytes_transferred);
+            }
+            // Receive the next packet of this socket
+            this->Read();
+        }
+        else
+        {
+            std::cerr << "ERROR:" << error.what() << std::endl;
+        }
+    }
+
+public:
+
+    void Start(NetInterface* instance)
+    {
+        m_instance  = instance;
+
+        this->m_isOpen = true;
+        this->Read();
+    }
+
+    void Stop()
+    {
+        this->m_isOpen = false;
+    }
+
+    void Close()
+    {
+        this->m_isOpen = false;
+        if (m_instance)
+        {
+            m_instance->HandleClose(shared_from_this());
+        }
+        this->m_socket.close();
+    }
+
+public:
+    tcp_socket&    GetSocket()        { return m_socket; }
+
+    //Not understand why ??
+    //tcp_socket_ptr GetSocketPointer() { return tcp_socket_ptr(&m_socket); }
+
+private:
+    tcp_socket      m_socket;
+    network_service m_service;
+    NetPackage      m_packageBuff;
+
+    bool            m_isOpen;       // Establish connection successful variable set is true
+    NetInterface*   m_instance;
+
+    friend class Client;
+    friend class Server;
+};
+
+class Server : public NetInterface
+{
+public:
+    Server(const Server&) = delete;
+    Server& operator=(const Server&) = delete;
+
+    // Construct ther server to listen on specified TCP address and port
+    explicit Server(): m_acceptor{ asio::make_strand(m_service)}
+    {
+        // TODO: Contructor
+    }
+
+    void Config(const string& address, const string& port, const int& thread_size =1)
+    {
+        m_address      = address;
+        m_port         = port;
+        m_threads_size = thread_size;
+    }
+
+private:
+    void StartAccept()
+    {
+        tcp_session_ptr new_tcp_session = tcp_session::Create(m_service);
+
+        m_acceptor.async_accept(new_tcp_session->GetSocket(),
+                                boost::bind(&Server::HandleAccept, this, new_tcp_session,
+                                boost::asio::placeholders::error));
+    }
+
+    void HandleAccept(tcp_session_ptr session, const tcp_error& error)
+    {
+        if (!error)
+        {
+            m_sessions.push_back(session);
+            session->Start(this);
+        }
+        else
+        {
+            // TODO: Accept failed !
+            int a = 10;
+        }
+        this->StartAccept();
+    }
+
+    void CreateThread()
+    {
+        // Create a pool of threads to run all of the io_services.
+        for (std::size_t i = 0; i< m_threads_size; ++i) {
+            m_threads.create_thread(boost::bind(&asio::io_service::run, &m_service));
+        }
+
+        // Wait for all threads in the pool to exit.
+        m_threads.join_all();
+    }
+
+    void StartThread()
+    {
+        boost::thread_group threads;
+        threads.create_thread(boost::bind(&Server::CreateThread, this));
+    }
+
+public:
+
+    void Write(const NetPackage& pack)
+    {
+        if (m_sessions.size() > 0)
+        {
+            m_sessions[0]->Write(pack);
+        }
+    }
+
+    void Start()
+    {
+        // Initialize the socket and listen to the incoming connection
+        auto endpoint = tcp_endpoint( asio::ip::address::from_string(m_address), std::atoi(m_port.c_str()));
+        m_acceptor.open(endpoint.protocol());
+        m_acceptor.set_option( boost::asio::ip::tcp::acceptor::reuse_address(true));
+        m_acceptor.bind(endpoint);
+        m_acceptor.listen();
+
+        this->StartAccept();
+        this->StartThread();
+    }
+
+private:
+    virtual void HandleWrite(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred)
+    {
+        //Handle session after send package
+    }
+
+    virtual void HandleRead(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred)
+    {
+        //Handle session after receive package
+        std::cout << " Client said :: >> " << session->m_packageBuff.data_body_to_string()  << std::endl;
+    }
+
+    void Stop()
+    {
+
+    }
+
+private:
+
+private:
+    string                      m_address;
+    string                      m_port;
+
+    thread_group                m_threads;
+    int                         m_threads_size;
+
+    // Acceptor used to listen for incoming connections.
+    network_service             m_service;
+    tcp_acceptor                m_acceptor;
+
+    vector<tcp_session_ptr>     m_sessions;
+};
+
+class Client : public NetInterface
 {
 public:
     Client() :m_resolver(m_service)
@@ -399,10 +477,21 @@ public:
 
     void Write(const NetPackage& pack)
     {
-        boost::asio::async_write(m_tcp_session->GetSocket(), asio::buffer(pack.data(), pack.length()),
-                                 boost::bind(&Client::HandleWriteRequest, this,
-                                             boost::asio::placeholders::error));
+        //if (!m_tcp_session->m_isOpen) return;
+
+        //// This is lambda expression
+        //m_service.post( [this, pack]
+        //{
+        //    boost::asio::async_write(m_tcp_session->GetSocket(),
+        //                             asio::buffer(pack.data(), pack.MAX_PACKAGE_LENGTH),
+        //                             boost::bind(&Client::HandleWriteRequest, this,
+        //                             boost::asio::placeholders::error));
+        //    
+        //});
+
+        m_tcp_session->Write(pack);
     }
+
 private:
     void CreateThread()
     {
@@ -442,9 +531,13 @@ private:
         if (!err)
         {
             // The connection was successful. Send the request
-            boost::asio::async_write(m_tcp_session->GetSocket(), m_request,
-                                        boost::bind(&Client::HandleWriteRequest, this,
-                                        boost::asio::placeholders::error));
+            //m_service.post([this, pack]
+            //{
+            //    boost::asio::async_write(m_tcp_session->GetSocket(), m_request,
+            //                             boost::bind(&Client::HandleWriteRequest, this,
+            //                                         boost::asio::placeholders::error));
+            //});'
+            m_tcp_session->Start(this);
         }
         else if(iter != tcp_resolver_iter())
         {
@@ -456,6 +549,7 @@ private:
         }
         else
         {
+            m_tcp_session->Stop();
             std::cout << "Error : " << err.message() << std::endl;
         }
     }
@@ -466,12 +560,21 @@ private:
         if (!err)
         {
             std::cout << "[User send] :" << std::endl;
-            this->Write();
         }
         else
         {
             std::cout << "Error : " << err.what() << std::endl;
         }
+    }
+
+    virtual void HandleWrite(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred)
+    {
+        //Handle session after send package
+    }
+
+    virtual void HandleRead(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred)
+    {
+        std::cout << " Server said :: >> " << session->m_packageBuff.data_body_to_string()  << std::endl;
     }
 
 private:
