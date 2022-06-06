@@ -191,10 +191,7 @@ class NetInterface
 public:
     virtual void HandleWrite(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred) = 0;
     virtual void HandleRead (const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred) = 0;
-    virtual void HandleClose(const tcp_session_ptr session)
-    {
-        return;
-    }
+    virtual void HandleClose(const tcp_session_ptr session){  return; }
 };
 
 
@@ -238,16 +235,37 @@ public:
                                              boost::asio::placeholders::error,
                                              boost::asio::placeholders::bytes_transferred));
     }
+private:
+
+    void HandleCloseDefault()
+    {
+
+    }
 
 private:
 
     // Look forward to general handling here
     void Handle_Write_Com(const tcp_error& error, size_t bytes_transferred)
     {
+        // Handle for a send package
         if (!error)
         {
-            // TODO : Hanlde write common
-            if(m_instance) m_instance->HandleWrite(shared_from_this(), error, bytes_transferred);
+            // TODO : Hanlde write common user custom
+            if (m_instance)
+            {
+                m_instance->HandleWrite(shared_from_this(), error, bytes_transferred);
+            }
+        }
+        // Handle for the disconnect 
+        else if (asio::error::eof              == error ||
+                 asio::error::connection_reset == error)
+        {
+            if (m_instance)
+            {
+                m_instance->HandleClose(shared_from_this());
+            }
+
+            this->Close();
         }
         else
         {
@@ -258,15 +276,26 @@ private:
 
     void Handle_Read_Com(const boost::system::error_code& error, size_t bytes_transferred)
     {
+        // Handle for a reveice package 
         if (!error)
         {
-            // Hanle for a reveice package 
+            // TODO : Hanlde read user custom
             if (m_instance)
             {
                 m_instance->HandleRead(shared_from_this(), error, bytes_transferred);
             }
             // Receive the next packet of this socket
             this->Read();
+        }
+        // Handle for the disconnect 
+        else if (asio::error::eof              == error ||
+                 asio::error::connection_reset == error)
+        {
+            if (m_instance)
+            {
+                m_instance->HandleClose(shared_from_this());
+            }
+            this->Close();
         }
         else
         {
@@ -292,10 +321,6 @@ public:
     void Close()
     {
         this->m_isOpen = false;
-        if (m_instance)
-        {
-            m_instance->HandleClose(shared_from_this());
-        }
         this->m_socket.close();
     }
 
@@ -378,6 +403,31 @@ private:
         threads.create_thread(boost::bind(&Server::CreateThread, this));
     }
 
+    bool SessionWrite(const tcp_session_ptr session, const NetPackage& pack)
+    {
+
+    }
+
+    bool RemoveSession(const tcp_session_ptr session)
+    {
+        bool rel = false;
+
+        for (auto it = m_sessions.begin(); it != m_sessions.end(); /*it++*/)
+        {
+            // Found session in list
+            if (*it == session)
+            {
+                it = m_sessions.erase(it);
+                rel = true;
+            }
+            else
+            {
+                it++;
+            }
+        }
+        return rel;
+    }
+
 public:
 
     void Write(const NetPackage& pack)
@@ -411,6 +461,19 @@ private:
     {
         //Handle session after receive package
         std::cout << " Client said :: >> " << session->m_packageBuff.data_body_to_string()  << std::endl;
+    }
+
+    virtual void HandleClose(const tcp_session_ptr session)
+    {
+        // Handle session disconnect
+        std::cout << "[*] Client disconnect ...." << std::endl;
+
+
+        // Remove session in client list
+        if (!RemoveSession(session))
+        {
+            std::cout << "[ERR] Remove session failed !" << std::endl;
+        }
     }
 
     void Stop()

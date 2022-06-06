@@ -23,11 +23,9 @@ int main()
     int a = 0;
     while (true)
     {
-
-
         //cout << "[Server][" << a++ << "] : >>" << endl;
 
-        server.Write(pack);
+        //server.Write(pack);
         Sleep(1000);
     }
 
