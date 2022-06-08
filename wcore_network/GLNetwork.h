@@ -3,6 +3,7 @@
 
 
 #include <iostream>
+#include <unordered_map>
 #include <boost/asio.hpp>
 #include <boost/thread.hpp>
 #include <boost/bind/bind.hpp>
@@ -342,10 +343,32 @@ private:
     friend class Server;
 };
 
+class SessionDataBase
+{
+    typedef std::unordered_map<int, tcp_session_ptr>  MapSession;
+
+private:
+    MapSession m_sessions;
+
+public:
+    void Add(tcp_session_ptr session)
+    {
+        m_sessions[(int)session.get()] = session;
+    }
+
+    void Remove(tcp_session_ptr sesison)
+    {
+
+    }
+};
+
 class Server : public NetInterface
 {
+    
+
 public:
-    Server(const Server&) = delete;
+
+    Server(const Server&)            = delete;
     Server& operator=(const Server&) = delete;
 
     // Construct ther server to listen on specified TCP address and port
@@ -404,6 +427,11 @@ private:
     }
 
     bool SessionWrite(const tcp_session_ptr session, const NetPackage& pack)
+    {
+
+    }
+
+    bool AddSession(const tcp_session_ptr session)
     {
 
     }
@@ -495,6 +523,7 @@ private:
     tcp_acceptor                m_acceptor;
 
     vector<tcp_session_ptr>     m_sessions;
+    std::unordered_map<std::string,std::string> mymap;
 };
 
 class Client : public NetInterface
