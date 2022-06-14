@@ -195,6 +195,73 @@ public:
     virtual void HandleClose(const tcp_session_ptr session){  return; }
 };
 
+// Note : Container data use keyword similar datasession web mvc
+class DataSession
+{
+private:
+    std::unordered_map<std::string, void*> m_data;
+
+private:
+    bool IsExist(std::string key) const
+    {
+        return (m_data.find(key) != m_data.end() && m_data.at(key) != NULL);
+    }
+public:
+    DataSession()
+    {
+
+    }
+
+    ~DataSession()
+    {
+        this->Clear();
+    }
+
+public:
+    void* Get(const std::string& key) const
+    {
+        if (IsExist(key))
+        {
+            return m_data.at(key);
+        }
+    }
+
+    void* operator[](const std::string& key) const
+    {
+        return Get(key);
+    }
+
+    void*& operator[](const std::string& key)
+    {
+        return m_data[key];
+    }
+
+public:
+
+    void Add(std::string key, void* data)
+    {
+        if (m_data.find(key) == m_data.end())
+        {
+            m_data[key] = data;
+        }
+    }
+
+    void Remove(std::string key)
+    {
+        m_data.erase(key);
+    }
+
+    void Clear()
+    {
+        for (auto i = m_data.begin(); i != m_data.end();i++)
+        {
+            delete i->second;
+        }
+
+        m_data.clear();
+    }
+};
+
 
 // Note : Use boost::enable_shared_from_this instead of std::enable_shared_from_this
 // if you use this, the program crashed
@@ -202,26 +269,38 @@ class tcp_session: public boost::enable_shared_from_this<tcp_session>
 {
 private:
     // Không cho sử dụng cái này cho dễ quản lý
-    tcp_session(network_service& service): m_socket(service)
+    tcp_session(network_service& ioservice): m_socket(ioservice)
     {
         m_isOpen = false;
     }
 
 public:
-    static tcp_session_ptr Create(network_service& service)
+    static tcp_session_ptr Create(network_service& ioservice)
     {
-        return tcp_session_ptr(new tcp_session(service));
+        return tcp_session_ptr(new tcp_session(ioservice));
     }
 
 public:
 
     bool IsOpen() { return m_isOpen; }
 
+    void SetUserData(const std::string& key, void* data)
+    {
+        m_data_session.Add(key, data);
+    }
+
+    void* GetUserData(const std::string& key)
+    {
+        return m_data_session[key];
+    }
+
+    void ResetBuffer() { m_buff.clear(); }
+
     void Read()
     {
         if (!m_isOpen) return;
 
-        boost::asio::async_read(m_socket, boost::asio::buffer(m_packageBuff.data(), m_packageBuff.MAX_PACKAGE_LENGTH),
+        boost::asio::async_read(m_socket, boost::asio::buffer(m_buff.data(), m_buff.MAX_PACKAGE_LENGTH),
                                 boost::bind(&tcp_session::Handle_Read_Com, shared_from_this(),
                                             boost::asio::placeholders::error,
                                             boost::asio::placeholders::bytes_transferred));
@@ -231,16 +310,10 @@ public:
     {
         if (!m_isOpen) return;
 
-        boost::asio::async_write(m_socket, boost::asio::buffer(pack.data(), m_packageBuff.MAX_PACKAGE_LENGTH),
+        boost::asio::async_write(m_socket, boost::asio::buffer(pack.data(), m_buff.MAX_PACKAGE_LENGTH),
                                  boost::bind(&tcp_session::Handle_Write_Com, shared_from_this(),
                                              boost::asio::placeholders::error,
                                              boost::asio::placeholders::bytes_transferred));
-    }
-private:
-
-    void HandleCloseDefault()
-    {
-
     }
 
 private:
@@ -252,18 +325,18 @@ private:
         if (!error)
         {
             // TODO : Hanlde write common user custom
-            if (m_instance)
+            if (m_dispatcher)
             {
-                m_instance->HandleWrite(shared_from_this(), error, bytes_transferred);
+                m_dispatcher->HandleWrite(shared_from_this(), error, bytes_transferred);
             }
         }
         // Handle for the disconnect 
         else if (asio::error::eof              == error ||
                  asio::error::connection_reset == error)
         {
-            if (m_instance)
+            if (m_dispatcher)
             {
-                m_instance->HandleClose(shared_from_this());
+                m_dispatcher->HandleClose(shared_from_this());
             }
 
             this->Close();
@@ -281,9 +354,9 @@ private:
         if (!error)
         {
             // TODO : Hanlde read user custom
-            if (m_instance)
+            if (m_dispatcher)
             {
-                m_instance->HandleRead(shared_from_this(), error, bytes_transferred);
+                m_dispatcher->HandleRead(shared_from_this(), error, bytes_transferred);
             }
             // Receive the next packet of this socket
             this->Read();
@@ -292,9 +365,9 @@ private:
         else if (asio::error::eof              == error ||
                  asio::error::connection_reset == error)
         {
-            if (m_instance)
+            if (m_dispatcher)
             {
-                m_instance->HandleClose(shared_from_this());
+                m_dispatcher->HandleClose(shared_from_this());
             }
             this->Close();
         }
@@ -306,11 +379,10 @@ private:
 
 public:
 
-    void Start(NetInterface* instance)
+    void Start(NetInterface* dispatcher)
     {
-        m_instance  = instance;
-
-        this->m_isOpen = true;
+        this->m_dispatcher = dispatcher;
+        this->m_isOpen     = true;
         this->Read();
     }
 
@@ -333,39 +405,246 @@ public:
 
 private:
     tcp_socket      m_socket;
-    network_service m_service;
-    NetPackage      m_packageBuff;
+    NetPackage      m_buff;         // Buffer that receives or sends information to and from
+    NetInterface*   m_dispatcher;   // Object, handling information received or sent
 
     bool            m_isOpen;       // Establish connection successful variable set is true
-    NetInterface*   m_instance;
+    DataSession     m_data_session; // Contains user defined data
 
     friend class Client;
     friend class Server;
 };
 
-class SessionDataBase
+struct PLUG_DATA
 {
-    typedef std::unordered_map<int, tcp_session_ptr>  MapSession;
+    int                 m_id;
+    bool                m_active;
+    tcp_session_ptr     m_session;
 
-private:
-    MapSession m_sessions;
+    PLUG_DATA()
+    {
+        m_active = true;
+    }
+};
+
+class IdentityGenerator
+{
+    enum { IFN_FREE = -99999}; // Free id
+public:
+    int              m_max_id;
+    int              m_count;
+    std::vector<int> m_available_id;
 
 public:
-    void Add(tcp_session_ptr session)
+    IdentityGenerator(int max_gen = IFN_FREE)
     {
-        m_sessions[(int)session.get()] = session;
+        m_count  = 0;
+        m_max_id = max_gen;
     }
 
-    void Remove(tcp_session_ptr sesison)
+    int alloc()
+    {
+        if (m_available_id.size() > 0)
+        {
+            int id = m_available_id.front();
+
+            m_available_id.erase(m_available_id.begin());
+
+            return id;
+        }
+
+        if (m_max_id == IFN_FREE || m_count < m_max_id)
+        {
+            return m_count++;
+        }
+
+        return -1;
+    }
+
+    void free(int id)
+    {
+        // If exist in available id
+        for (int i = 0; i < m_available_id.size(); i++)
+        {
+            if (m_available_id[i] == id)
+            {
+                return;
+            }
+        }
+
+        // Push id to available id
+        if (id >= 0 && (m_max_id == IFN_FREE || id < m_max_id))
+        {
+            m_available_id.push_back(id);
+        }
+    }
+};
+
+class NetSwitchInterface
+{
+    enum { MAX_PLUG = 20};
+
+private:
+    int                m_switch_id;
+    std::string        m_switch_name;
+    //int              m_count;
+    //std::vector<int> m_available_id;
+
+    IdentityGenerator  m_gentor;
+
+    PLUG_DATA*         m_plugs[MAX_PLUG];
+
+private:
+    //int GenerateID()
+    //{
+    //    if (m_available_id.size() > 0)
+    //    {
+    //        int id = m_available_id.front();
+
+    //        m_available_id.erase(m_available_id.begin());
+
+    //        return id;
+    //    }
+
+    //    if (m_count < MAX_PLUG)
+    //    {
+    //        return m_count++;
+    //    }
+
+    //    std::cout << "ERROR : Gen id failed !" << std::endl;
+
+    //    return -1;
+    //}
+
+    void RemovePlug(int index)
+    {
+        if (m_plugs[index] != NULL)
+        {
+            delete m_plugs[index];
+            m_plugs[index] = NULL;
+        }
+        m_gentor.free(index);
+    }
+
+public:
+    NetSwitchInterface(): m_gentor(MAX_PLUG)
+    {
+        m_switch_name = "";
+    }
+
+    PLUG_DATA* PlugIn(const tcp_session_ptr session)
+    {
+        //int id = GenerateID();
+
+        int id = m_gentor.alloc();
+
+        if ( id != -1)
+        {
+            PLUG_DATA* plug = new PLUG_DATA();
+            plug->m_session = session;
+            plug->m_active  = true;
+            plug->m_id      = id;
+
+            m_plugs[id] = plug;
+
+            return plug;
+        }
+
+        return NULL;
+    }
+
+    void PlugOut(const tcp_session_ptr session)
+    {
+        for (int i = 0; i < MAX_PLUG; i++)
+        {
+            if (m_plugs[i] != NULL && m_plugs[i]->m_session == session)
+            {
+                RemovePlug(i);
+
+            }
+        }
+    }
+
+public:
+    virtual void Write(const NetPackage& pack)
+    {
+        for (int i = 0; i < MAX_PLUG; i++)
+        {
+            if (m_plugs[i]->m_active)
+            {
+                m_plugs[i]->m_session->Write(pack);
+            }
+        }
+    }
+
+    virtual void Read()
     {
 
     }
 };
 
+
+//class SwitchManager
+//{
+//private:
+//
+//    std::unordered_map<std::string, NetSwitchInterface*> mana;
+//
+//public:
+//    static Net
+//public:
+//    void Add(NetSwitchInterface)
+//};
+
+
+class NetDataBase
+{
+    typedef std::unordered_map<int, tcp_session_ptr>      SessionManager;
+    typedef std::unordered_map<std::string, NetSwitchInterface*>  SwitchManager;
+
+private:
+    // These two properties are related
+    SessionManager  m_session_manager;
+    SwitchManager   m_switch_manager;
+
+private:
+
+    static int KeyGenerator()
+    {
+
+    }
+public:
+    NetDataBase()
+    {
+
+    }
+
+    ~NetDataBase()
+    {
+        //for(int i =0 ; i< )
+    }
+
+public:
+    int Add(tcp_session_ptr session)
+    {
+        int key = KeyGenerator();
+
+        if (key != -1)
+        {
+            //m_sessions[key] = session;
+        }
+
+        return key;
+    }
+
+    void Remove(tcp_session_ptr sesison)
+    {
+        //m_sessions.erase((int)session);
+    }
+};
+
 class Server : public NetInterface
 {
-    
-
 public:
 
     Server(const Server&)            = delete;
@@ -426,6 +705,8 @@ private:
         threads.create_thread(boost::bind(&Server::CreateThread, this));
     }
 
+public:
+    // Common
     bool SessionWrite(const tcp_session_ptr session, const NetPackage& pack)
     {
 
@@ -488,7 +769,7 @@ private:
     virtual void HandleRead(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred)
     {
         //Handle session after receive package
-        std::cout << " Client said :: >> " << session->m_packageBuff.data_body_to_string()  << std::endl;
+        std::cout << " Client said :: >> " << session->m_buff.data_body_to_string()  << std::endl;
     }
 
     virtual void HandleClose(const tcp_session_ptr session)
@@ -666,7 +947,7 @@ private:
 
     virtual void HandleRead(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred)
     {
-        std::cout << " Server said :: >> " << session->m_packageBuff.data_body_to_string()  << std::endl;
+        std::cout << " Server said :: >> " << session->m_buff.data_body_to_string()  << std::endl;
     }
 
 private:
