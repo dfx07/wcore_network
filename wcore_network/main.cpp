@@ -8,37 +8,37 @@
 
 int main()
 {
-    //Server server;
-    //server.Config(ADDRESS, PORT, 2);
+    Server server;
+    server.Config(ADDRESS, PORT, 2);
 
-    //server.Start();
+    server.Start();
 
-    //char header[] = "header";
-    //char body[]    = "Server chao client";
+    char header[] = "header";
+    char body[]    = "Server chao client";
 
-    //NetPackage pack;
-    //pack.set_header_data(header, sizeof(header)/ sizeof(header[0]));
-    //pack.set_body_data  (body  , sizeof(body  )/ sizeof(body[0]));
+    NetPackage pack;
+    pack.set_header_data(header, sizeof(header)/ sizeof(header[0]));
+    pack.set_body_data  (body  , sizeof(body  )/ sizeof(body[0]));
 
-    //int a = 0;
-    //while (true)
-    //{
-    //    //cout << "[Server][" << a++ << "] : >>" << endl;
+    int a = 0;
+    while (true)
+    {
+        //cout << "[Server][" << a++ << "] : >>" << endl;
 
-    //    server.Write(pack);
-    //    Sleep(1000);
-    //}
-
-    //return 0;
-
-    DataSession data;
-   
-    int* a = new int(5);
-
-
-    data["data1"] = (void*)a;
-
-    int b = *(int*)data["data1"];
+        server.Write(pack);
+        Sleep(1000);
+    }
 
     return 0;
+
+    //DataSession data;
+   
+    //int* a = new int(5);
+
+
+    //data["data1"] = (void*)a;
+
+    //int b = *(int*)data["data1"];
+
+    //return 0;
 }

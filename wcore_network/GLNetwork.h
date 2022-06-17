@@ -10,6 +10,9 @@
 #include <boost/asio/strand.hpp>
 #include <boost/enable_shared_from_this.hpp>
 
+#include <sstream>
+#include <string>
+
 using namespace std;
 using namespace boost;
 
@@ -280,6 +283,16 @@ public:
         return tcp_session_ptr(new tcp_session(ioservice));
     }
 
+    static bool IsActive(const tcp_session_ptr& session)
+    {
+        if (session == NULL || session->m_isOpen == false)
+        {
+            return false;
+        }
+
+        return true;
+    }
+
 public:
 
     bool IsOpen() { return m_isOpen; }
@@ -545,7 +558,7 @@ public:
             plug->m_active  = true;
             plug->m_id      = id;
 
-            m_plugs[id] = plug;
+            m_plugs[id]     = plug;
 
             return plug;
         }
@@ -560,7 +573,6 @@ public:
             if (m_plugs[i] != NULL && m_plugs[i]->m_session == session)
             {
                 RemovePlug(i);
-
             }
         }
     }
@@ -584,6 +596,97 @@ public:
 };
 
 
+class NetSessionManager
+{
+private:
+    std::unordered_map<std::string, tcp_session_ptr> m_data;
+
+public:
+    // Constructor NetSessionManager
+    NetSessionManager()
+    {
+
+    }
+
+
+    // Destructor NetSessionManager
+    ~NetSessionManager()
+    {
+
+    }
+
+public:
+    static std::string GetKey(const tcp_session_ptr& session)
+    {
+        // I use the value of the pointer to make key
+        std::stringstream ss;
+        ss << session.get();
+        return ss.str();
+    }
+
+public:
+    bool IsExist(const tcp_session_ptr& session) const
+    {
+        // Slow when more session data
+        //for (auto i = m_data.begin(); i != m_data.end(); i++)
+        //{
+        //    if (session == i->second)
+        //    {
+        //        return true;
+        //    }
+        //}
+        //return false;
+
+        const string key = NetSessionManager::GetKey(session);
+
+        return IsExist(key);
+    }
+
+    bool IsExist(const std::string& key) const
+    {
+        return m_data.find(key) != m_data.end();
+    }
+
+    tcp_session_ptr GetFirst()
+    {
+        if (m_data.size() > 0)
+        {
+            return m_data.begin()->second;
+        }
+        return NULL;
+    }
+
+public:
+
+    void Add(const tcp_session_ptr& session)
+    {
+        string key = NetSessionManager::GetKey(session);
+
+        if (!IsExist(key))
+        {
+            m_data.insert(std::make_pair(key, session));
+        }
+    }
+
+    bool Remove(const tcp_session_ptr& session)
+    {
+        string key = NetSessionManager::GetKey(session);
+
+        while (IsExist(key))
+        {
+            m_data.erase(key);
+        }
+
+        return true;
+    }
+
+    void Clear()
+    {
+        m_data.clear();
+    }
+};
+
+
 //class SwitchManager
 //{
 //private:
@@ -599,13 +702,13 @@ public:
 
 class NetDataBase
 {
-    typedef std::unordered_map<int, tcp_session_ptr>      SessionManager;
-    typedef std::unordered_map<std::string, NetSwitchInterface*>  SwitchManager;
+    //typedef std::unordered_map<int, tcp_session_ptr>      SessionManager;
+    //typedef std::unordered_map<std::string, NetSwitchInterface*>  SwitchManager;
 
 private:
     // These two properties are related
-    SessionManager  m_session_manager;
-    SwitchManager   m_switch_manager;
+    NetSessionManager  m_session_manager;
+    //SwitchManager   m_switch_manager;
 
 private:
 
@@ -623,23 +726,27 @@ public:
     {
         //for(int i =0 ; i< )
     }
+public:
+
 
 public:
-    int Add(tcp_session_ptr session)
+    tcp_session_ptr GetFirstSession()
     {
-        int key = KeyGenerator();
-
-        if (key != -1)
-        {
-            //m_sessions[key] = session;
-        }
-
-        return key;
+        return m_session_manager.GetFirst();
     }
 
-    void Remove(tcp_session_ptr sesison)
+    bool AddSession(const tcp_session_ptr& session)
+    {
+        m_session_manager.Add(session);
+
+        return true;
+    }
+
+    bool RemoveSession(const tcp_session_ptr& sesison)
     {
         //m_sessions.erase((int)session);
+
+        return m_session_manager.Remove(sesison);
     }
 };
 
@@ -677,7 +784,9 @@ private:
     {
         if (!error)
         {
-            m_sessions.push_back(session);
+            tcp_socket& sock =  session->GetSocket();
+            cout << "[*] Accept connections from : " << sock.local_endpoint().address().to_string() << endl;
+            m_database.AddSession(session);
             session->Start(this);
         }
         else
@@ -706,44 +815,45 @@ private:
     }
 
 public:
-    // Common
-    bool SessionWrite(const tcp_session_ptr session, const NetPackage& pack)
-    {
+    //// Common
+    //bool SessionWrite(const tcp_session_ptr session, const NetPackage& pack)
+    //{
 
-    }
+    //}
 
-    bool AddSession(const tcp_session_ptr session)
-    {
+    //bool AddSession(const tcp_session_ptr session)
+    //{
 
-    }
+    //}
 
-    bool RemoveSession(const tcp_session_ptr session)
-    {
-        bool rel = false;
+    //bool RemoveSession(const tcp_session_ptr session)
+    //{
+    //    bool rel = false;
 
-        for (auto it = m_sessions.begin(); it != m_sessions.end(); /*it++*/)
-        {
-            // Found session in list
-            if (*it == session)
-            {
-                it = m_sessions.erase(it);
-                rel = true;
-            }
-            else
-            {
-                it++;
-            }
-        }
-        return rel;
-    }
+    //    for (auto it = m_sessions.begin(); it != m_sessions.end(); /*it++*/)
+    //    {
+    //        // Found session in list
+    //        if (*it == session)
+    //        {
+    //            it = m_sessions.erase(it);
+    //            rel = true;
+    //        }
+    //        else
+    //        {
+    //            it++;
+    //        }
+    //    }
+    //    return rel;
+    //}
 
 public:
 
     void Write(const NetPackage& pack)
     {
-        if (m_sessions.size() > 0)
+        auto session = m_database.GetFirstSession();
+        if (tcp_session::IsActive(session))
         {
-            m_sessions[0]->Write(pack);
+            session->Write(pack);
         }
     }
 
@@ -779,7 +889,7 @@ private:
 
 
         // Remove session in client list
-        if (!RemoveSession(session))
+        if (!m_database.RemoveSession(session))
         {
             std::cout << "[ERR] Remove session failed !" << std::endl;
         }
@@ -803,8 +913,7 @@ private:
     network_service             m_service;
     tcp_acceptor                m_acceptor;
 
-    vector<tcp_session_ptr>     m_sessions;
-    std::unordered_map<std::string,std::string> mymap;
+    NetDataBase                 m_database;
 };
 
 class Client : public NetInterface
