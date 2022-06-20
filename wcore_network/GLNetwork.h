@@ -19,6 +19,8 @@ using namespace boost;
 
 #define MAX_BUFF 1024
 
+#define IS_NULL(ptr) (ptr == NULL)
+
 /*==========================================================================================
     As far as the need for using shared_from_this() in async_read and async_write,          
     the reason is that it guarantees that the method wrapped by boost::bind will always     
@@ -42,6 +44,10 @@ using namespace boost;
 ==========================================================================================*/
 
 class tcp_session;
+
+class NetSwitchInterface;
+class NetSwitchManager;
+class NetDataBase;
 
 typedef asio::io_service                         network_service;
 typedef asio::ip::address                        network_address;
@@ -442,44 +448,88 @@ struct PLUG_DATA
 
 class IdentityGenerator
 {
-    enum { IFN_FREE = -99999}; // Free id
+    enum 
+    {
+        IFN_FREE = -99999, // Free id
+        IFN_NULL = -1,     // Gen free id
+    };
+
 public:
     int              m_max_id;
     int              m_count;
-    std::vector<int> m_available_id;
+    std::vector<int> m_free_id;
+    std::vector<int> m_data_id;
 
 public:
     IdentityGenerator(int max_gen = IFN_FREE)
     {
         m_count  = 0;
         m_max_id = max_gen;
+
+        // Reserve data max 100
+        if (m_max_id > 0)
+        {
+            m_data_id.reserve(m_max_id);
+        }
+        else
+        {
+            m_data_id.reserve(100);
+        }
+    }
+
+    static bool is_null(const int key)
+    {
+        return (key == IFN_NULL);
+    }
+
+    int size() const
+    {
+        return (int)m_data_id.size();
+    }
+
+    int operator[](const int& index) const
+    {
+        return m_data_id[index];
     }
 
     int alloc()
     {
-        if (m_available_id.size() > 0)
+        if (m_free_id.size() > 0)
         {
-            int id = m_available_id.front();
+            int id = m_free_id.front();
 
-            m_available_id.erase(m_available_id.begin());
+            m_free_id.erase(m_free_id.begin());
+
+            m_data_id.push_back(id);
 
             return id;
         }
 
         if (m_max_id == IFN_FREE || m_count < m_max_id)
         {
-            return m_count++;
+            m_data_id.push_back(m_count++);
+            return m_data_id.back();
         }
 
-        return -1;
+        return IFN_NULL;
     }
 
     void free(int id)
     {
-        // If exist in available id
-        for (int i = 0; i < m_available_id.size(); i++)
+        // Remove id in datalist
+        for (auto i = m_data_id.begin(); i != m_data_id.end(); ++i)
         {
-            if (m_available_id[i] == id)
+            if (*i == id)
+            {
+                m_data_id.erase(i);
+                i--;
+            }
+        }
+
+        // If exist in available id
+        for (int i = 0; i < m_free_id.size(); i++)
+        {
+            if (m_free_id[i] == id)
             {
                 return;
             }
@@ -488,8 +538,16 @@ public:
         // Push id to available id
         if (id >= 0 && (m_max_id == IFN_FREE || id < m_max_id))
         {
-            m_available_id.push_back(id);
+            m_free_id.push_back(id);
         }
+    }
+
+    void free_all()
+    {
+        m_data_id.clear();
+        m_free_id.clear();
+        m_max_id = IFN_FREE;
+        m_count = 0;
     }
 };
 
@@ -498,14 +556,12 @@ class NetSwitchInterface
     enum { MAX_PLUG = 20};
 
 private:
-    int                m_switch_id;
-    std::string        m_switch_name;
-    //int              m_count;
-    //std::vector<int> m_available_id;
+    int                  m_switch_id;   //The value of property cannot be set
+    std::string          m_switch_name;
 
-    IdentityGenerator  m_gentor;
+    IdentityGenerator    m_gentor;
 
-    PLUG_DATA*         m_plugs[MAX_PLUG];
+    vector<PLUG_DATA*>   m_plugs;
 
 private:
     //int GenerateID()
@@ -531,34 +587,50 @@ private:
 
     void RemovePlug(int index)
     {
-        if (m_plugs[index] != NULL)
+        if (index >= 0 && index < m_plugs.size())
         {
             delete m_plugs[index];
             m_plugs[index] = NULL;
+
+            m_plugs.erase(m_plugs.begin() + index);
+            m_gentor.free(index);
         }
-        m_gentor.free(index);
+    }
+
+public:
+    int GetIndexPlug(const tcp_session_ptr session) const
+    {
+        for (int i = 0; i < m_plugs.size(); i++)
+        {
+            if (!IS_NULL(m_plugs[i]) && m_plugs[i]->m_session == session)
+            {
+                return i;
+            }
+        }
+        return -1;
     }
 
 public:
     NetSwitchInterface(): m_gentor(MAX_PLUG)
     {
         m_switch_name = "";
+        m_plugs.reserve(MAX_PLUG);
     }
 
     PLUG_DATA* PlugIn(const tcp_session_ptr session)
     {
-        //int id = GenerateID();
+        if (IS_NULL(session)) return NULL;
 
-        int id = m_gentor.alloc();
+        const int id = m_gentor.alloc();
 
-        if ( id != -1)
+        if (!IdentityGenerator::is_null(id) && m_plugs.size() < MAX_PLUG)
         {
             PLUG_DATA* plug = new PLUG_DATA();
             plug->m_session = session;
             plug->m_active  = true;
             plug->m_id      = id;
 
-            m_plugs[id]     = plug;
+            m_plugs.push_back(plug);
 
             return plug;
         }
@@ -568,21 +640,27 @@ public:
 
     void PlugOut(const tcp_session_ptr session)
     {
-        for (int i = 0; i < MAX_PLUG; i++)
+        if (IS_NULL(session)) return;
+
+        int index = GetIndexPlug(session);
+
+        if (index >= 0)
         {
-            if (m_plugs[i] != NULL && m_plugs[i]->m_session == session)
-            {
-                RemovePlug(i);
-            }
+            RemovePlug(index);
         }
+    }
+
+    void PlugOut(const int& index)
+    {
+        RemovePlug(index);
     }
 
 public:
     virtual void Write(const NetPackage& pack)
     {
-        for (int i = 0; i < MAX_PLUG; i++)
+        for (int i = 0; i < m_plugs.size(); i++)
         {
-            if (m_plugs[i]->m_active)
+            if (IS_NULL(m_plugs[i]) &&  m_plugs[i]->m_active)
             {
                 m_plugs[i]->m_session->Write(pack);
             }
@@ -593,6 +671,9 @@ public:
     {
 
     }
+
+
+    friend class NetSwitchManager;
 };
 
 
@@ -687,17 +768,76 @@ public:
 };
 
 
-//class SwitchManager
-//{
-//private:
-//
-//    std::unordered_map<std::string, NetSwitchInterface*> mana;
-//
-//public:
-//    static Net
-//public:
-//    void Add(NetSwitchInterface)
-//};
+class NetSwitchManager
+{
+    enum
+    {
+        MAX_SWITCH = 20
+    };
+private:
+
+    std::unordered_map<int, NetSwitchInterface*> m_data;
+    IdentityGenerator                            m_genID;
+
+private:
+
+    bool IsExist(int keyID) const
+    {
+        return m_data.find(keyID) != m_data.end();
+    }
+
+public:
+    NetSwitchManager() : m_genID(MAX_SWITCH)
+    {
+
+    }
+
+    ~NetSwitchManager()
+    {
+        for (auto i = m_data.begin(); i != m_data.end(); i++)
+        {
+            delete i->second;
+        }
+        m_genID.free_all();
+    }
+
+    int Size()
+    {
+        return (int)m_data.size();
+    }
+
+    NetSwitchInterface* operator[](const int& index) const
+    {
+        int keyID = m_genID[index];
+        if (IsExist(keyID))
+        {
+            return m_data.at(keyID);
+        }
+        return NULL;
+    }
+
+    void Add(NetSwitchInterface* _swi)
+    {
+        int keyID = m_genID.alloc();
+        if (!IdentityGenerator::is_null(keyID))
+        {
+            // assign id for switchInterface
+            _swi->m_switch_id = keyID;
+            m_data.insert(std::make_pair(keyID, _swi));
+        }
+    }
+
+    void Remove(const NetSwitchInterface* _swi)
+    {
+        int keyID = _swi->m_switch_id;
+
+        if (IsExist(keyID))
+        {
+            m_data.erase(keyID);
+            m_genID.free(keyID);
+        }
+    }
+};
 
 
 class NetDataBase
@@ -708,7 +848,7 @@ class NetDataBase
 private:
     // These two properties are related
     NetSessionManager  m_session_manager;
-    //SwitchManager   m_switch_manager;
+    NetSwitchManager   m_switch_manager;
 
 private:
 
@@ -742,11 +882,32 @@ public:
         return true;
     }
 
+    // Remove the session and all data associated with it
     bool RemoveSession(const tcp_session_ptr& sesison)
     {
         //m_sessions.erase((int)session);
 
+        // Remove session in switch associated
+        for (int i = 0; i < m_switch_manager.Size(); i++)
+        {
+            NetSwitchInterface* swit = m_switch_manager[i];
+
+            swit->PlugOut(sesison);
+        }
+
+        // Remove session in session manager
         return m_session_manager.Remove(sesison);
+    }
+
+    bool AddSwitch(NetSwitchInterface* swi)
+    {
+        // ID switch auto define
+        m_switch_manager.Add(swi);
+    }
+
+    bool RemoveSwitch(const NetSwitchInterface* swi)
+    {
+        m_switch_manager.Remove(swi);
     }
 };
 
