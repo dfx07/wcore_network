@@ -66,6 +66,7 @@ typedef boost::asio::streambuf                   tcp_streambuf;
 
 
 typedef asio::ip::udp::endpoint                  udp_endpoint;
+typedef vector<NetSwitchInterface*>              ArrayNetSwitch;
 
 enum class IPVersion
 {
@@ -553,7 +554,10 @@ public:
 
 class NetSwitchInterface
 {
-    enum { MAX_PLUG = 20};
+    // Define common key
+    enum              { MAX_PLUG = 20};
+    const string const SWITCH_KEY_DATA = "_switch_info";
+
 
 private:
     int                  m_switch_id;   //The value of property cannot be set
@@ -597,6 +601,58 @@ private:
         }
     }
 
+    void PushInfoDataTo(tcp_session_ptr session)
+    {
+        void * switch_info = session->GetUserData(SWITCH_KEY_DATA);
+
+        if (!IS_NULL(switch_info))
+        {
+            ArrayNetSwitch* list_switch = static_cast<ArrayNetSwitch*>(switch_info);
+
+            int i = 0;  // Check switch already exist
+
+            for (i = 0; i < list_switch->size(); i++)
+            {
+                if (list_switch->at(i) == this)
+                {
+                    break;
+                }
+            }
+            if (i < list_switch->size())
+            {
+                list_switch->push_back(this);
+            }
+        }
+        else
+        {
+            ArrayNetSwitch* list_switch = new ArrayNetSwitch();
+            list_switch->push_back(this);
+
+            session->SetUserData( SWITCH_KEY_DATA, list_switch);
+        }
+    }
+
+    PLUG_DATA* CreatePlugData(const tcp_session_ptr session)
+    {
+        const int id = m_gentor.alloc();
+
+        // Created ID failed -> Return NULL;
+        if (!IdentityGenerator::is_null(id) && m_plugs.size() < MAX_PLUG)
+        {
+            return NULL;
+        }
+
+        // Create data plug and setup information session
+        PLUG_DATA* plug = new PLUG_DATA();
+        plug->m_session = session;
+        plug->m_active  = true;
+        plug->m_id      = id;
+
+        this->PushInfoDataTo(session);
+
+        return plug;
+    }
+
 public:
     int GetIndexPlug(const tcp_session_ptr session) const
     {
@@ -621,16 +677,11 @@ public:
     {
         if (IS_NULL(session)) return NULL;
 
-        const int id = m_gentor.alloc();
+        PLUG_DATA* plug = CreatePlugData(session);
 
-        if (!IdentityGenerator::is_null(id) && m_plugs.size() < MAX_PLUG)
+        if (!IS_NULL(plug))
         {
-            PLUG_DATA* plug = new PLUG_DATA();
-            plug->m_session = session;
-            plug->m_active  = true;
-            plug->m_id      = id;
 
-            m_plugs.push_back(plug);
 
             return plug;
         }
@@ -675,6 +726,8 @@ public:
 
     friend class NetSwitchManager;
 };
+
+
 
 
 class NetSessionManager
@@ -875,6 +928,11 @@ public:
         return m_session_manager.GetFirst();
     }
 
+    NetSwitchInterface* GetSwitchOf(const tcp_session_ptr& session)
+    {
+        m_switch_manager.find
+    }
+
     bool AddSession(const tcp_session_ptr& session)
     {
         m_session_manager.Add(session);
@@ -1039,6 +1097,8 @@ private:
 
     virtual void HandleRead(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred)
     {
+        for(int i =0 ; i< m_database)
+
         //Handle session after receive package
         std::cout << " Client said :: >> " << session->m_buff.data_body_to_string()  << std::endl;
     }
