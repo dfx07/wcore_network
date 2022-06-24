@@ -20,6 +20,7 @@ using namespace boost;
 #define MAX_BUFF 1024
 
 #define IS_NULL(ptr) (ptr == NULL)
+#define IS_NOT_NULL(ptr) (ptr != NULL)
 
 /*==========================================================================================
     As far as the need for using shared_from_this() in async_read and async_write,          
@@ -248,12 +249,9 @@ public:
 
 public:
 
-    void Add(std::string key, void* data)
+    void Set(std::string key, void* data)
     {
-        if (m_data.find(key) == m_data.end())
-        {
-            m_data[key] = data;
-        }
+        m_data[key] = data;
     }
 
     void Remove(std::string key)
@@ -306,7 +304,7 @@ public:
 
     void SetUserData(const std::string& key, void* data)
     {
-        m_data_session.Add(key, data);
+        m_data_session.Set(key, data);
     }
 
     void* GetUserData(const std::string& key)
@@ -518,12 +516,15 @@ public:
     void free(int id)
     {
         // Remove id in datalist
-        for (auto i = m_data_id.begin(); i != m_data_id.end(); ++i)
+        for (auto i = m_data_id.begin(); i != m_data_id.end(); /*i++*/)
         {
             if (*i == id)
             {
-                m_data_id.erase(i);
-                i--;
+                i = m_data_id.erase(i);
+            }
+            else
+            {
+                i++;
             }
         }
 
@@ -556,9 +557,6 @@ class NetSwitchInterface
 {
     // Define common key
     enum              { MAX_PLUG = 20};
-    const string const SWITCH_KEY_DATA = "_switch_info";
-
-
 private:
     int                  m_switch_id;   //The value of property cannot be set
     std::string          m_switch_name;
@@ -566,6 +564,17 @@ private:
     IdentityGenerator    m_gentor;
 
     vector<PLUG_DATA*>   m_plugs;
+
+public:
+    static const string SWITCH_KEY_DATA()
+    {
+        return "_switch_info";
+    }
+
+    static bool IsActive(NetSwitchInterface* swit)
+    {
+        return (IS_NOT_NULL(swit));
+    }
 
 private:
     //int GenerateID()
@@ -589,21 +598,35 @@ private:
     //    return -1;
     //}
 
-    void RemovePlug(int index)
+    void DetachInfoDataTo(PLUG_DATA* plug)
     {
-        if (index >= 0 && index < m_plugs.size())
-        {
-            delete m_plugs[index];
-            m_plugs[index] = NULL;
+        if (IS_NULL(plug)) return;
 
-            m_plugs.erase(m_plugs.begin() + index);
-            m_gentor.free(index);
+        void * switch_info = plug->m_session->GetUserData(SWITCH_KEY_DATA());
+
+        if (IS_NULL(switch_info)) return;
+
+        // Remove cache data session in plug
+        ArrayNetSwitch* list_switch = static_cast<ArrayNetSwitch*>(switch_info);
+
+        for (auto it = list_switch->begin(); it != list_switch->end();/* it++*/)
+        {
+            if (*it == this)
+            {
+                it = list_switch->erase(it);
+            }
+            else
+            {
+                it++;
+            }
         }
     }
 
-    void PushInfoDataTo(tcp_session_ptr session)
+    bool AttachInfoDataTo(PLUG_DATA* plug)
     {
-        void * switch_info = session->GetUserData(SWITCH_KEY_DATA);
+        if (IS_NULL(plug)) return false;
+
+        void * switch_info = plug->m_session->GetUserData(SWITCH_KEY_DATA());
 
         if (!IS_NULL(switch_info))
         {
@@ -628,16 +651,43 @@ private:
             ArrayNetSwitch* list_switch = new ArrayNetSwitch();
             list_switch->push_back(this);
 
-            session->SetUserData( SWITCH_KEY_DATA, list_switch);
+            plug->m_session->SetUserData(SWITCH_KEY_DATA(), list_switch);
         }
+
+        return true;
     }
 
-    PLUG_DATA* CreatePlugData(const tcp_session_ptr session)
+    bool IsExistIn(const tcp_session_ptr& session)
     {
+        if (IS_NULL(session)) return false;
+
+        void * switch_info = session->GetUserData(SWITCH_KEY_DATA());
+
+        if (IS_NULL(switch_info))
+        {
+            return false;
+        }
+
+        ArrayNetSwitch* list_switch = static_cast<ArrayNetSwitch*>(switch_info);
+
+        for (int i = 0; i < list_switch->size(); i++)
+        {
+            if (list_switch->at(i) == this)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    PLUG_DATA* CreatePlugData(const tcp_session_ptr& session) 
+    {
+        if (IS_NULL(session) || m_plugs.size() >= MAX_PLUG) return NULL;
+
         const int id = m_gentor.alloc();
 
         // Created ID failed -> Return NULL;
-        if (!IdentityGenerator::is_null(id) && m_plugs.size() < MAX_PLUG)
+        if (IdentityGenerator::is_null(id))
         {
             return NULL;
         }
@@ -648,13 +698,28 @@ private:
         plug->m_active  = true;
         plug->m_id      = id;
 
-        this->PushInfoDataTo(session);
-
         return plug;
     }
 
-public:
-    int GetIndexPlug(const tcp_session_ptr session) const
+    void RemovePlugData(const tcp_session_ptr& session)
+    {
+        if (IsExistIn(session)) // Check switch in session fast
+        {
+            int index = GetIndexPlugData(session);
+
+            if (index >= 0 && index < m_plugs.size())
+            {
+                DetachInfoDataTo(m_plugs[index]);
+
+                m_plugs.erase(m_plugs.begin() + index);
+
+                m_gentor.free(index);
+            }
+        }
+    }
+
+private:
+    int GetIndexPlugData(const tcp_session_ptr session) const
     {
         for (int i = 0; i < m_plugs.size(); i++)
         {
@@ -675,15 +740,16 @@ public:
 
     PLUG_DATA* PlugIn(const tcp_session_ptr session)
     {
-        if (IS_NULL(session)) return NULL;
-
         PLUG_DATA* plug = CreatePlugData(session);
 
-        if (!IS_NULL(plug))
+        if (AttachInfoDataTo(plug))
         {
-
-
+            m_plugs.push_back(plug);
             return plug;
+        }
+        else
+        {
+            delete plug;
         }
 
         return NULL;
@@ -691,19 +757,13 @@ public:
 
     void PlugOut(const tcp_session_ptr session)
     {
-        if (IS_NULL(session)) return;
-
-        int index = GetIndexPlug(session);
-
-        if (index >= 0)
-        {
-            RemovePlug(index);
-        }
+        RemovePlugData(session);
     }
 
-    void PlugOut(const int& index)
+private:
+    void HandleReadCom(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred)
     {
-        RemovePlug(index);
+
     }
 
 public:
@@ -711,20 +771,22 @@ public:
     {
         for (int i = 0; i < m_plugs.size(); i++)
         {
-            if (IS_NULL(m_plugs[i]) &&  m_plugs[i]->m_active)
+            if (IS_NOT_NULL(m_plugs[i]) && m_plugs[i]->m_active)
             {
                 m_plugs[i]->m_session->Write(pack);
             }
         }
     }
 
-    virtual void Read()
+    virtual void Read(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred)
     {
-
+        std::cout << "[ >> Switch process ] Read data" << endl;
+        this->HandleReadCom(session, error, bytes_transferred);
     }
 
 
     friend class NetSwitchManager;
+    friend class Server;
 };
 
 
@@ -869,6 +931,15 @@ public:
         return NULL;
     }
 
+    NetSwitchInterface* GetAt(const int& keyID)
+    {
+        if (IsExist(keyID))
+        {
+            return m_data.at(keyID);
+        }
+        return NULL;
+    }
+
     void Add(NetSwitchInterface* _swi)
     {
         int keyID = m_genID.alloc();
@@ -927,10 +998,21 @@ public:
     {
         return m_session_manager.GetFirst();
     }
-
-    NetSwitchInterface* GetSwitchOf(const tcp_session_ptr& session)
+    NetSwitchInterface* GetSwitch(int keyID)
     {
-        m_switch_manager.find
+        return m_switch_manager.GetAt(keyID);
+    }
+
+    ArrayNetSwitch* GetListSwitchOf(const tcp_session_ptr& session)
+    {
+        void* switch_info = session->GetUserData(NetSwitchInterface::SWITCH_KEY_DATA());
+
+        if (IS_NOT_NULL(switch_info))
+        {
+            ArrayNetSwitch* list_switch = static_cast<ArrayNetSwitch*>(switch_info);
+            return list_switch;
+        }
+        return NULL;
     }
 
     bool AddSession(const tcp_session_ptr& session)
@@ -961,6 +1043,26 @@ public:
     {
         // ID switch auto define
         m_switch_manager.Add(swi);
+
+        return true;
+    }
+
+    bool PushSessionToSwitch( NetSwitchInterface* swi, const tcp_session_ptr& session)
+    {
+        swi->PlugIn(session);
+    }
+
+    bool PushSessionToSwitch( int keySwitchID , const tcp_session_ptr& session)
+    {
+        NetSwitchInterface* swit = m_switch_manager.GetAt(keySwitchID);
+
+        if (IS_NOT_NULL(swit))
+        {
+            swit->PlugIn(session);
+
+            return true;
+        }
+        return false;
     }
 
     bool RemoveSwitch(const NetSwitchInterface* swi)
@@ -987,6 +1089,10 @@ public:
         m_address      = address;
         m_port         = port;
         m_threads_size = thread_size;
+
+        NetSwitchInterface* swit = new NetSwitchInterface();
+        swit->m_switch_name = "Switch_default";
+        m_database.AddSwitch(swit);
     }
 
 private:
@@ -1006,6 +1112,7 @@ private:
             tcp_socket& sock =  session->GetSocket();
             cout << "[*] Accept connections from : " << sock.local_endpoint().address().to_string() << endl;
             m_database.AddSession(session);
+            m_database.PushSessionToSwitch(0, session);
             session->Start(this);
         }
         else
@@ -1076,6 +1183,15 @@ public:
         }
     }
 
+    void WriteToSwitch(int switch_id, const NetPackage& pack)
+    {
+        auto swit = m_database.GetSwitch(switch_id);
+        if (NetSwitchInterface::IsActive(swit))
+        {
+            swit->Write(pack);
+        }
+    }
+
     void Start()
     {
         // Initialize the socket and listen to the incoming connection
@@ -1088,6 +1204,12 @@ public:
         this->StartAccept();
         this->StartThread();
     }
+private:
+    virtual void ServerHandleRead(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred)
+    {
+        //Handle session after receive package
+        std::cout << "[ >> Server  process ] Read data :: >> " << session->m_buff.data_body_to_string()  << std::endl;
+    }
 
 private:
     virtual void HandleWrite(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred)
@@ -1097,17 +1219,21 @@ private:
 
     virtual void HandleRead(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred)
     {
-        for(int i =0 ; i< m_database)
+        ArrayNetSwitch* list_switch = m_database.GetListSwitchOf(session);
 
-        //Handle session after receive package
-        std::cout << " Client said :: >> " << session->m_buff.data_body_to_string()  << std::endl;
+        if (IS_NOT_NULL(list_switch))
+        {
+            for (int i = 0; i < list_switch->size(); i++)
+            {
+                list_switch->at(i)->Read(session, error, bytes_transferred);
+            }
+        }
     }
 
     virtual void HandleClose(const tcp_session_ptr session)
     {
         // Handle session disconnect
         std::cout << "[*] Client disconnect ...." << std::endl;
-
 
         // Remove session in client list
         if (!m_database.RemoveSession(session))

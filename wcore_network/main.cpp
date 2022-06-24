@@ -25,7 +25,7 @@ int main()
     {
         //cout << "[Server][" << a++ << "] : >>" << endl;
 
-        server.Write(pack);
+        server.WriteToSwitch(0, pack);
         Sleep(1000);
     }
 
