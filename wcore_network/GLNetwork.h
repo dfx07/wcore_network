@@ -235,6 +235,7 @@ public:
         {
             return m_data.at(key);
         }
+        return NULL;
     }
 
     void* operator[](const std::string& key) const
@@ -442,6 +443,40 @@ struct PLUG_DATA
     PLUG_DATA()
     {
         m_active = true;
+    }
+};
+
+
+class KGenerator
+{
+
+public:
+    static const std::string from_ptr(const tcp_session_ptr& sessionptr, const std::string& pref = "",const std::string& suff = "")
+    {
+        // I use the value of the pointer to make key
+        std::stringstream ss;
+
+        if (!pref.empty()) ss << pref;
+
+        ss << sessionptr.get();
+
+        if (!suff.empty()) ss << suff;
+
+        return ss.str();
+    }
+
+    static const std::string from_ptr(const void* ptr, const std::string& pref = "",const std::string& suff = "")
+    {
+        // I use the value of the pointer to make key
+        std::stringstream ss;
+
+        if (!pref.empty()) ss << pref;
+
+        ss << ptr;
+
+        if (!suff.empty()) ss << suff;
+
+        return ss.str();
     }
 };
 
