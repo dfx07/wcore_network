@@ -101,6 +101,13 @@ private:
     }
 
 public:
+    static std::string to_string(void* data)
+    {
+        char* temp = static_cast<char*>(data);
+        return string(&temp[0]);
+    }
+
+public:
     NetPackage(): m_body_length(0)
     {
         memset(&m_data[0], 0, MAX_HEADER_LENGTH + MAX_BODY_LENGTH);
@@ -127,8 +134,45 @@ public:
         return (void*)&m_data[0];
     }
 
+    // Get data header exactlly package
+    int get_header_data(char** data) const
+    {
+        *data = new char[MAX_HEADER_LENGTH];
+        memcpy_s(*data, MAX_HEADER_LENGTH, &m_data[0], MAX_HEADER_LENGTH);
+        return MAX_HEADER_LENGTH;
+    }
+
+    int get_header_data(char** data)
+    {
+        *data = new char[MAX_HEADER_LENGTH];
+        memcpy_s(*data, MAX_HEADER_LENGTH, &m_data[0], MAX_HEADER_LENGTH);
+        return MAX_HEADER_LENGTH;
+    }
+
+    std::string get_header_to_string()
+    {
+        std::string tmp(MAX_HEADER_LENGTH, '\0');
+        memcpy_s(&tmp[0], MAX_HEADER_LENGTH, &m_data[0], MAX_HEADER_LENGTH);
+        return tmp;
+    }
+
+    // Get data body exactlly package
+    int get_body_data(char** data) const
+    {
+        *data = new char[MAX_HEADER_LENGTH];
+        memcpy_s(*data, m_body_length, &m_data[MAX_HEADER_LENGTH], m_body_length);
+        return m_body_length;
+    }
+
+    int get_body_data(char** data) 
+    {
+        *data = new char[MAX_HEADER_LENGTH];
+        memcpy_s(*data, m_body_length, &m_data[MAX_HEADER_LENGTH], m_body_length);
+        return m_body_length;
+    }
+
     // Get message body to string 
-    string data_body_to_string()
+    std::string get_body_to_string()
     {
         return string(&m_data[MAX_HEADER_LENGTH]);
     }
@@ -271,6 +315,155 @@ public:
     }
 };
 
+// Note : Command parsing of the statement
+class ArgumemtParsing
+{
+    typedef pair<string, string> KEY_VAL;
+
+private:
+    vector<KEY_VAL>     m_args;
+    std::string         m_command;
+
+private:
+
+    void TrimStart(std::string& str)
+    {
+        while (!str.empty() && *str.begin() == ' ')
+        {
+            str.erase(str.begin());
+        }
+    }
+
+    void RemoveExtraSpace(std::string& str)
+    {
+        const char DOUBLE_SPACE[] = "  ";
+
+        while (!str.empty() && *str.begin() == ' ')
+        {
+            str.erase(str.begin());
+        }
+
+        while (!str.empty() && str.back() == ' ')
+        {
+            str.pop_back();
+        }
+
+        int found = str.find(DOUBLE_SPACE);
+
+        while (found >=0 )
+        {
+            str.erase(str.begin() + found);
+            found = str.find(DOUBLE_SPACE);
+        }
+    }
+
+    void ReadCommand(std::string& str)
+    {
+        TrimStart(str);
+        int idx = str.find_first_of(' ');
+
+        string cmd = str.substr(0, idx);
+
+        str = str.substr(idx + 1);
+    }
+
+
+    void ReadArgs(std::string& str)
+    {
+        string data = "";
+        int last_substr_index = 0;
+
+        bool bPush = false;
+        int  state_input = 0;
+
+        m_args.clear();
+
+        KEY_VAL argvl;
+
+        while (!str.empty())
+        {
+            // Remove space extra
+            TrimStart(str);
+
+            last_substr_index = 0;
+            data = "";
+
+            // find key 
+            if (state_input == 0)
+            {
+                last_substr_index = str.find_first_of(' ');
+
+                // is key args command
+                if (str[0] == '-')
+                {
+                    str.erase(str.begin());
+
+                    if (last_substr_index > 0)
+                    {
+                        data = str.substr(0, last_substr_index);
+                    }
+
+                    argvl.first = data;
+
+                    state_input = 1;
+                }
+            }
+            // find value
+            else if (state_input == 1)
+            {
+                // is string case
+                if (str[0] == '\'')
+                {
+                    str.erase(str.begin());
+
+                    last_substr_index = str.find('\'');
+                    if (last_substr_index > 0)
+                    {
+                        data = str.substr(0, last_substr_index);
+                    }
+                }
+                // is normal case
+                else 
+                {
+                    last_substr_index = str.find_first_of(' ');
+                    data = str.substr(0, last_substr_index);
+                }
+
+                state_input = 0;
+            }
+
+            // not found break data
+            if (last_substr_index == -1)
+            {
+                break;
+            }
+
+            if (bPush)
+            {
+                m_args.push_back(argvl);
+                argvl.first  = "";
+                argvl.second = "";
+            }
+
+            str = str.substr(last_substr_index + 1);
+        }
+    }
+
+public:
+    ArgumemtParsing()
+    {
+
+    }
+
+    void Parse(std::string cmd)
+    {
+        RemoveExtraSpace(cmd);
+
+        ReadCommand(cmd);
+
+        ReadArgs(cmd);
+    }
+};
 
 // Note : Use boost::enable_shared_from_this instead of std::enable_shared_from_this
 // if you use this, the program crashed
@@ -436,7 +629,8 @@ private:
 
 struct PLUG_DATA
 {
-    int                 m_id;
+    std::string         m_name;
+
     bool                m_active;
     tcp_session_ptr     m_session;
 
@@ -591,12 +785,10 @@ public:
 class NetSwitchInterface
 {
     // Define common key
-    enum              { MAX_PLUG = 20};
+    enum                 { MAX_PLUG = 20};
 private:
     int                  m_switch_id;   //The value of property cannot be set
     std::string          m_switch_name;
-
-    IdentityGenerator    m_gentor;
 
     vector<PLUG_DATA*>   m_plugs;
 
@@ -717,13 +909,11 @@ private:
 
     PLUG_DATA* CreatePlugData(const tcp_session_ptr& session) 
     {
-        if (IS_NULL(session) || m_plugs.size() >= MAX_PLUG) return NULL;
+        int index_free = GetFreeIndexPlug();
 
-        const int id = m_gentor.alloc();
-
-        // Created ID failed -> Return NULL;
-        if (IdentityGenerator::is_null(id))
+        if (index_free == -1 || IS_NULL(session))
         {
+            throw " >> Create plug data failed ! no slot";
             return NULL;
         }
 
@@ -731,7 +921,9 @@ private:
         PLUG_DATA* plug = new PLUG_DATA();
         plug->m_session = session;
         plug->m_active  = true;
-        plug->m_id      = id;
+
+
+        m_plugs[index_free] = plug;
 
         return plug;
     }
@@ -741,14 +933,12 @@ private:
         if (IsExistIn(session)) // Check switch in session fast
         {
             int index = GetIndexPlugData(session);
-
-            if (index >= 0 && index < m_plugs.size())
+            
+            if (index >= 0 && index < MAX_PLUG)
             {
                 DetachInfoDataTo(m_plugs[index]);
 
-                m_plugs.erase(m_plugs.begin() + index);
-
-                m_gentor.free(index);
+                m_plugs[index] = NULL;
             }
         }
     }
@@ -756,9 +946,30 @@ private:
 private:
     int GetIndexPlugData(const tcp_session_ptr session) const
     {
-        for (int i = 0; i < m_plugs.size(); i++)
+        for (int i = 0; i < MAX_PLUG; i++)
         {
-            if (!IS_NULL(m_plugs[i]) && m_plugs[i]->m_session == session)
+            if (IS_NOT_NULL(m_plugs[i]) && m_plugs[i]->m_session == session)
+            {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    void ResetPlug()
+    {
+        for (int i = 0; i < MAX_PLUG; i++)
+        {
+            delete m_plugs[i];
+            m_plugs[i] = NULL;
+        }
+    }
+
+    int GetFreeIndexPlug()
+    {
+        for (int i = 0; i < MAX_PLUG; i++)
+        {
+            if (IS_NULL(m_plugs[i]))
             {
                 return i;
             }
@@ -767,10 +978,11 @@ private:
     }
 
 public:
-    NetSwitchInterface(): m_gentor(MAX_PLUG)
+    NetSwitchInterface()/*: m_gentor(MAX_PLUG)*/
     {
         m_switch_name = "";
         m_plugs.reserve(MAX_PLUG);
+        this->ResetPlug();
     }
 
     PLUG_DATA* PlugIn(const tcp_session_ptr session)
@@ -801,10 +1013,20 @@ private:
 
     }
 
+    void ProcessPackage(const NetPackage& pack)
+    {
+        char* data_body = NULL;
+        int n = pack.get_header_data(&data_body);
+        if (n > 0)
+        {
+
+        }
+    }
+
 public:
     virtual void Write(const NetPackage& pack)
     {
-        for (int i = 0; i < m_plugs.size(); i++)
+        for (int i = 0; i < MAX_PLUG; i++)
         {
             if (IS_NOT_NULL(m_plugs[i]) && m_plugs[i]->m_active)
             {
@@ -1243,7 +1465,7 @@ private:
     virtual void ServerHandleRead(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred)
     {
         //Handle session after receive package
-        std::cout << "[ >> Server  process ] Read data :: >> " << session->m_buff.data_body_to_string()  << std::endl;
+        std::cout << "[ >> Server  process ] Read data :: >> " << session->m_buff.get_body_to_string()  << std::endl;
     }
 
 private:
@@ -1438,7 +1660,7 @@ private:
 
     virtual void HandleRead(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred)
     {
-        std::cout << " Server said :: >> " << session->m_buff.data_body_to_string()  << std::endl;
+        std::cout << " Server said :: >> " << session->m_buff.get_body_to_string()  << std::endl;
     }
 
 private:
