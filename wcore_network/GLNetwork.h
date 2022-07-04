@@ -318,7 +318,12 @@ public:
 // Note : Command parsing of the statement
 class ArgumemtParsing
 {
-    typedef pair<string, string> KEY_VAL;
+    struct KEY_VAL
+    {
+    public:
+        std::string key;
+        std::string value;
+    };
 
 private:
     vector<KEY_VAL>     m_args;
@@ -362,19 +367,30 @@ private:
         TrimStart(str);
         int idx = str.find_first_of(' ');
 
-        string cmd = str.substr(0, idx);
+        m_command = str.substr(0, idx);
 
         str = str.substr(idx + 1);
     }
 
 
+    int find_first_or_last(const std::string& str, const char& ch, size_t pos = 0)
+    {
+        int idx = str.find_first_of(ch, pos);
+
+        if (idx == -1)
+        {
+            idx = str.length();
+        }
+
+        return idx;
+    }
+
     void ReadArgs(std::string& str)
     {
         string data = "";
-        int last_substr_index = 0;
+        int last_substr_index = 0, state_input = 0;
 
         bool bPush = false;
-        int  state_input = 0;
 
         m_args.clear();
 
@@ -385,27 +401,39 @@ private:
             // Remove space extra
             TrimStart(str);
 
-            last_substr_index = 0;
-            data = "";
+            last_substr_index = 0; data = "";
 
             // find key 
             if (state_input == 0)
             {
-                last_substr_index = str.find_first_of(' ');
-
-                // is key args command
+                // is [key args] command
                 if (str[0] == '-')
                 {
-                    str.erase(str.begin());
+                    last_substr_index = find_first_or_last(str, ' ');
+                    data = str.substr(1, last_substr_index - 1);
 
-                    if (last_substr_index > 0)
-                    {
-                        data = str.substr(0, last_substr_index);
-                    }
-
-                    argvl.first = data;
-
+                    argvl.key   = data;
                     state_input = 1;
+                }
+                //is [data args] is string not [key args]
+                else if (str[0] == '\'')
+                {
+                    last_substr_index = find_first_or_last(str, '\'', 1);
+                    data = str.substr(1, last_substr_index - 1);
+
+                    argvl.key = data;
+
+                    bPush = true;
+                }
+                // is [data args] not string
+                else
+                {
+                    last_substr_index = find_first_or_last(str, ' ');
+                    data = str.substr(0, last_substr_index);
+
+                    argvl.key = data;
+
+                    bPush = true;
                 }
             }
             // find value
@@ -414,38 +442,39 @@ private:
                 // is string case
                 if (str[0] == '\'')
                 {
-                    str.erase(str.begin());
+                    last_substr_index = find_first_or_last(str, '\'', 1);
+                    data = str.substr(1, last_substr_index - 1);
 
-                    last_substr_index = str.find('\'');
-                    if (last_substr_index > 0)
-                    {
-                        data = str.substr(0, last_substr_index);
-                    }
+                    argvl.value = data;
                 }
                 // is normal case
                 else 
                 {
-                    last_substr_index = str.find_first_of(' ');
+                    last_substr_index = find_first_or_last(str, ' ');
                     data = str.substr(0, last_substr_index);
+
+                    argvl.value = data;
                 }
 
                 state_input = 0;
-            }
-
-            // not found break data
-            if (last_substr_index == -1)
-            {
-                break;
+                bPush       = true;
             }
 
             if (bPush)
             {
                 m_args.push_back(argvl);
-                argvl.first  = "";
-                argvl.second = "";
+                argvl.key   = "";
+                argvl.value = "";
+                bPush = false;
             }
-
-            str = str.substr(last_substr_index + 1);
+            if (last_substr_index + 1 < str.length())
+            {
+                str = str.substr(last_substr_index + 1);
+            }
+            else
+            {
+                break;
+            }
         }
     }
 
@@ -457,7 +486,6 @@ public:
 
     void Parse(std::string cmd)
     {
-        RemoveExtraSpace(cmd);
 
         ReadCommand(cmd);
 
