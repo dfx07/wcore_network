@@ -19,8 +19,8 @@ using namespace boost;
 
 #define MAX_BUFF 1024
 
-#define IS_NULL(ptr) (ptr == NULL)
-#define IS_NOT_NULL(ptr) (ptr != NULL)
+#define is_null(ptr) (ptr == NULL)
+#define is_not_null(ptr) (ptr != NULL)
 
 /*==========================================================================================
     As far as the need for using shared_from_this() in async_read and async_write,          
@@ -79,7 +79,7 @@ enum class IPVersion
 struct NetPackage
 {
 public:
-    enum { MAX_HEADER_LENGTH  =  12  };
+    enum { MAX_HEADER_LENGTH  =  32  };
     enum { MAX_BODY_LENGTH    =  512 };
     enum { MAX_PACKAGE_LENGTH = MAX_HEADER_LENGTH + MAX_BODY_LENGTH };
 
@@ -657,14 +657,19 @@ private:
 
 struct PLUG_DATA
 {
+    // data information propertis
+    std::string         m_id;
     std::string         m_name;
 
+    // data struct
     bool                m_active;
     tcp_session_ptr     m_session;
 
     PLUG_DATA()
     {
         m_active = true;
+        m_id     = "_noneid";
+        m_name   = "_none_name";
     }
 };
 
@@ -733,7 +738,7 @@ public:
         }
     }
 
-    static bool is_null(const int key)
+    static bool _is_null(const int key)
     {
         return (key == IFN_NULL);
     }
@@ -828,7 +833,7 @@ public:
 
     static bool IsActive(NetSwitchInterface* swit)
     {
-        return (IS_NOT_NULL(swit));
+        return (is_not_null(swit));
     }
 
 private:
@@ -855,11 +860,11 @@ private:
 
     void DetachInfoDataTo(PLUG_DATA* plug)
     {
-        if (IS_NULL(plug)) return;
+        if (is_null(plug)) return;
 
         void * switch_info = plug->m_session->GetUserData(SWITCH_KEY_DATA());
 
-        if (IS_NULL(switch_info)) return;
+        if (is_null(switch_info)) return;
 
         // Remove cache data session in plug
         ArrayNetSwitch* list_switch = static_cast<ArrayNetSwitch*>(switch_info);
@@ -879,11 +884,11 @@ private:
 
     bool AttachInfoDataTo(PLUG_DATA* plug)
     {
-        if (IS_NULL(plug)) return false;
+        if (is_null(plug)) return false;
 
         void * switch_info = plug->m_session->GetUserData(SWITCH_KEY_DATA());
 
-        if (!IS_NULL(switch_info))
+        if (!is_null(switch_info))
         {
             ArrayNetSwitch* list_switch = static_cast<ArrayNetSwitch*>(switch_info);
 
@@ -914,11 +919,11 @@ private:
 
     bool IsExistIn(const tcp_session_ptr& session)
     {
-        if (IS_NULL(session)) return false;
+        if (is_null(session)) return false;
 
         void * switch_info = session->GetUserData(SWITCH_KEY_DATA());
 
-        if (IS_NULL(switch_info))
+        if (is_null(switch_info))
         {
             return false;
         }
@@ -939,7 +944,7 @@ private:
     {
         int index_free = GetFreeIndexPlug();
 
-        if (index_free == -1 || IS_NULL(session))
+        if (index_free == -1 || is_null(session))
         {
             throw " >> Create plug data failed ! no slot";
             return NULL;
@@ -949,6 +954,7 @@ private:
         PLUG_DATA* plug = new PLUG_DATA();
         plug->m_session = session;
         plug->m_active  = true;
+        plug->m_id      = KGenerator::from_ptr(session, KGenerator::from_ptr(this));
 
 
         m_plugs[index_free] = plug;
@@ -960,28 +966,68 @@ private:
     {
         if (IsExistIn(session)) // Check switch in session fast
         {
-            int index = GetIndexPlugData(session);
-            
-            if (index >= 0 && index < MAX_PLUG)
-            {
-                DetachInfoDataTo(m_plugs[index]);
+            PLUG_DATA* plug = GetPlugData(session);
 
-                m_plugs[index] = NULL;
+            if (is_not_null(plug))
+            {
+                DetachInfoDataTo(plug);
+
+                RemovePlug(plug);
             }
         }
     }
 
+    void RemovePlugData(const std::string& id)
+    {
+        PLUG_DATA* plug = GetPlugData(id);
+
+        if (is_not_null(plug))
+        {
+            DetachInfoDataTo(plug);
+
+            RemovePlug(plug);
+        }
+    }
+
 private:
-    int GetIndexPlugData(const tcp_session_ptr session) const
+
+    // Get plug_dat from session information 
+    PLUG_DATA* GetPlugData(const tcp_session_ptr session) const
     {
         for (int i = 0; i < MAX_PLUG; i++)
         {
-            if (IS_NOT_NULL(m_plugs[i]) && m_plugs[i]->m_session == session)
+            if (is_not_null(m_plugs[i]) && m_plugs[i]->m_session == session)
             {
-                return i;
+                return m_plugs[i];
             }
         }
-        return -1;
+        return NULL;
+    }
+
+    // Get plug_dat from id information 
+    PLUG_DATA* GetPlugData(const std::string& id) const
+    {
+        for (int i = 0; i < MAX_PLUG; i++)
+        {
+            if (is_not_null(m_plugs[i]) && m_plugs[i]->m_id == id)
+            {
+                return m_plugs[i];
+            }
+        }
+        return NULL;
+    }
+
+    // remove plug in list plugs
+    void RemovePlug(const PLUG_DATA* plug)
+    {
+        for (int i = 0; i < MAX_PLUG; i++)
+        {
+            if (m_plugs[i] == plug)
+            {
+                delete m_plugs[i];
+                m_plugs[i] = NULL;
+            }
+        }
     }
 
     void ResetPlug()
@@ -997,7 +1043,7 @@ private:
     {
         for (int i = 0; i < MAX_PLUG; i++)
         {
-            if (IS_NULL(m_plugs[i]))
+            if (is_null(m_plugs[i]))
             {
                 return i;
             }
@@ -1041,25 +1087,66 @@ private:
 
     }
 
-    void ProcessPackage(const NetPackage& pack)
+
+    enum NOTIFY_CODE
     {
-        char* data_body = NULL;
-        int n = pack.get_header_data(&data_body);
-        if (n > 0)
+
+
+    };
+
+    NOTIFY_CODE HeaderPackage(const NetPackage& pack, std::string& data)
+    {
+
+        /* struct [8] byte : code and [32-8] byte data */
+        char* data_header = NULL;
+
+        if (pack.get_header_data(&data_header))
         {
+            
+            if (!strncmp(data_header, "2dt", 3))
+            {
+                return NOTIFY_CODE
+            }
+            else if (!strncmp(data_header, "2dt", 3))
+            {
+
+            }
 
         }
+        delete[] data_header;
+
+        return 
     }
 
 public:
+    virtual bool ChangeName(const std::string& id, std::string name)
+    {
+        PLUG_DATA* plug = GetPlugData(id);
+
+        if (is_not_null(plug) || !name.empty())
+        {
+            plug->m_name = name;
+        }
+    }
+
     virtual void Write(const NetPackage& pack)
     {
         for (int i = 0; i < MAX_PLUG; i++)
         {
-            if (IS_NOT_NULL(m_plugs[i]) && m_plugs[i]->m_active)
+            if (is_not_null(m_plugs[i]) && m_plugs[i]->m_active)
             {
                 m_plugs[i]->m_session->Write(pack);
             }
+        }
+    }
+
+    virtual void WriteTo(const std::string& id, const NetPackage& pack)
+    {
+        PLUG_DATA* plug = GetPlugData(id);
+
+        if (is_not_null(plug))
+        {
+            plug->m_session->Write(pack);
         }
     }
 
@@ -1228,7 +1315,7 @@ public:
     void Add(NetSwitchInterface* _swi)
     {
         int keyID = m_genID.alloc();
-        if (!IdentityGenerator::is_null(keyID))
+        if (!IdentityGenerator::_is_null(keyID))
         {
             // assign id for switchInterface
             _swi->m_switch_id = keyID;
@@ -1292,7 +1379,7 @@ public:
     {
         void* switch_info = session->GetUserData(NetSwitchInterface::SWITCH_KEY_DATA());
 
-        if (IS_NOT_NULL(switch_info))
+        if (is_not_null(switch_info))
         {
             ArrayNetSwitch* list_switch = static_cast<ArrayNetSwitch*>(switch_info);
             return list_switch;
@@ -1341,7 +1428,7 @@ public:
     {
         NetSwitchInterface* swit = m_switch_manager.GetAt(keySwitchID);
 
-        if (IS_NOT_NULL(swit))
+        if (is_not_null(swit))
         {
             swit->PlugIn(session);
 
@@ -1506,7 +1593,7 @@ private:
     {
         ArrayNetSwitch* list_switch = m_database.GetListSwitchOf(session);
 
-        if (IS_NOT_NULL(list_switch))
+        if (is_not_null(list_switch))
         {
             for (int i = 0; i < list_switch->size(); i++)
             {
