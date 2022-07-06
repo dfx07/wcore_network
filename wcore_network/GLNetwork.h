@@ -12,12 +12,19 @@
 
 #include <sstream>
 #include <string>
+#include <assert.h>
 
 using namespace std;
 using namespace boost;
 
 
 #define MAX_BUFF 1024
+
+#ifdef NDEBUG
+    #define assert_m(b, msg) assert
+#else 
+    #define assert_m(b, msg) assert
+#endif
 
 #define is_null(ptr) (ptr == NULL)
 #define is_not_null(ptr) (ptr != NULL)
@@ -76,73 +83,84 @@ enum class IPVersion
     V6
 };
 
+
+struct PACKDATA
+{
+public:
+    int     a = 0;
+    double  x = 0;
+    double  y = 0;
+    double  z = 0;
+};
+
 struct NetPackage
 {
 public:
-    enum { MAX_HEADER_LENGTH  =  32  };
-    enum { MAX_BODY_LENGTH    =  512 };
-    enum { MAX_PACKAGE_LENGTH = MAX_HEADER_LENGTH + MAX_BODY_LENGTH };
+    enum { MAX_HEADER_LENGTH  =   32 }; // ='[32 ] - [header_data]'
+    enum { DATA_BODY_LENGTH   =    4 }; // ='[4  ] - [length_body]'
+    enum { MAX_BODY_LENGTH    =  512 }; // ='[512] - [body_data  ]'
+
+    enum { INFO_LENGTH        =  MAX_HEADER_LENGTH + DATA_BODY_LENGTH };
+    enum { PACKAGE_LENGTH     =  MAX_HEADER_LENGTH + DATA_BODY_LENGTH + MAX_BODY_LENGTH };
 
 private:
     // struct :     [header] + [body]
-    char            m_data[MAX_HEADER_LENGTH + MAX_BODY_LENGTH];
+    char            m_data[PACKAGE_LENGTH];
     unsigned int    m_body_length;
 
 private:
+
+    // clear data header + information data
     void clear_header()
     {
-        memset(&m_data[0], 0, MAX_HEADER_LENGTH);
+        memset(&m_data[0], 0, INFO_LENGTH);
     }
 
+    // clear data body
     void clear_body()
     {
         memset(&m_data[MAX_HEADER_LENGTH], 0, MAX_BODY_LENGTH);
         m_body_length = 0;
     }
 
-public:
-    static std::string to_string(void* data)
+    // pack body length to header packet
+    void pack_section_info()
     {
-        char* temp = static_cast<char*>(data);
-        return string(&temp[0]);
+        char data_body_length[DATA_BODY_LENGTH + 1] = "";
+        sprintf_s(data_body_length, "%4d", static_cast<int>(m_body_length));
+        memcpy_s(&m_data[MAX_HEADER_LENGTH], DATA_BODY_LENGTH, data_body_length, DATA_BODY_LENGTH);
+    }
+
+    // set information packet from data reserved
+    void unpack_section_info()
+    {
+        char data_body_length[DATA_BODY_LENGTH];
+        memcpy_s(data_body_length, DATA_BODY_LENGTH, &m_data[MAX_HEADER_LENGTH], DATA_BODY_LENGTH);
+
+        m_body_length = std::atoi(data_body_length);
     }
 
 public:
     NetPackage(): m_body_length(0)
     {
-        memset(&m_data[0], 0, MAX_HEADER_LENGTH + MAX_BODY_LENGTH);
+        this->clear_header();
+        this->clear_body();
     }
 
     // Get of length of package
-    const unsigned int length() const
-    {
-        return MAX_HEADER_LENGTH + m_body_length;
-    }
-    unsigned int length()
+    unsigned int length() const
     {
         return MAX_HEADER_LENGTH + m_body_length;
     }
 
     // Get data pointer exactlly package
-    const void* data() const
-    {
-        return (void*)&m_data[0];
-    }
-
-    void* data()
+    void* data() const
     {
         return (void*)&m_data[0];
     }
 
     // Get data header exactlly package
     int get_header_data(char** data) const
-    {
-        *data = new char[MAX_HEADER_LENGTH];
-        memcpy_s(*data, MAX_HEADER_LENGTH, &m_data[0], MAX_HEADER_LENGTH);
-        return MAX_HEADER_LENGTH;
-    }
-
-    int get_header_data(char** data)
     {
         *data = new char[MAX_HEADER_LENGTH];
         memcpy_s(*data, MAX_HEADER_LENGTH, &m_data[0], MAX_HEADER_LENGTH);
@@ -160,21 +178,14 @@ public:
     int get_body_data(char** data) const
     {
         *data = new char[MAX_HEADER_LENGTH];
-        memcpy_s(*data, m_body_length, &m_data[MAX_HEADER_LENGTH], m_body_length);
-        return m_body_length;
-    }
-
-    int get_body_data(char** data) 
-    {
-        *data = new char[MAX_HEADER_LENGTH];
-        memcpy_s(*data, m_body_length, &m_data[MAX_HEADER_LENGTH], m_body_length);
+        memcpy_s(*data, m_body_length, &m_data[INFO_LENGTH], m_body_length);
         return m_body_length;
     }
 
     // Get message body to string 
     std::string get_body_to_string()
     {
-        return string(&m_data[MAX_HEADER_LENGTH]);
+        return string(&m_data[INFO_LENGTH]);
     }
 
     // Set header and body data package
@@ -182,7 +193,8 @@ public:
     void set_body_data(void* _data, const unsigned int _size)
     {
         int _sizecp = (_size <= MAX_BODY_LENGTH) ? _size : MAX_BODY_LENGTH;
-        strncpy_s(&m_data[MAX_HEADER_LENGTH], _sizecp, (char*)_data, _sizecp);
+        //strncpy_s(&m_data[INFO_LENGTH], _sizecp, (char*)_data, _sizecp);
+        memcpy_s(&m_data[INFO_LENGTH], _sizecp, _data, _sizecp);
 
         m_body_length = _sizecp;
     }
@@ -191,7 +203,8 @@ public:
     void set_header_data(void* _data, const unsigned int _size)
     {
         int _sizecp = (_size <= MAX_HEADER_LENGTH) ? _size : MAX_HEADER_LENGTH;
-        strncpy_s(&m_data[0], _sizecp, (char*)_data, _sizecp);
+        //strncpy_s(&m_data[0], _sizecp, (char*)_data, _sizecp);
+        memcpy_s(&m_data[0], _sizecp, _data, _sizecp);
     }
 
     // Clear all data in package
@@ -199,6 +212,17 @@ public:
     {
         this->clear_header();
         this->clear_body();
+    }
+
+    // pack the package package moveed to send it go
+    void encode()
+    {
+        pack_section_info();
+    }
+
+    void decode()
+    {
+        unpack_section_info();
     }
 };
 
@@ -353,7 +377,7 @@ private:
             str.pop_back();
         }
 
-        int found = str.find(DOUBLE_SPACE);
+        size_t found = str.find(DOUBLE_SPACE);
 
         while (found >=0 )
         {
@@ -365,7 +389,7 @@ private:
     void ReadCommand(std::string& str)
     {
         TrimStart(str);
-        int idx = str.find_first_of(' ');
+        size_t idx = str.find_first_of(' ');
 
         m_command = str.substr(0, idx);
 
@@ -373,9 +397,9 @@ private:
     }
 
 
-    int find_first_or_last(const std::string& str, const char& ch, size_t pos = 0)
+    size_t find_first_or_last(const std::string& str, const char& ch, size_t pos = 0)
     {
-        int idx = str.find_first_of(ch, pos);
+        size_t idx = str.find_first_of(ch, pos);
 
         if (idx == -1)
         {
@@ -388,7 +412,7 @@ private:
     void ReadArgs(std::string& str)
     {
         string data = "";
-        int last_substr_index = 0, state_input = 0;
+        size_t last_substr_index = 0, state_input = 0;
 
         bool bPush = false;
 
@@ -540,7 +564,7 @@ public:
     {
         if (!m_isOpen) return;
 
-        boost::asio::async_read(m_socket, boost::asio::buffer(m_buff.data(), m_buff.MAX_PACKAGE_LENGTH),
+        boost::asio::async_read(m_socket, boost::asio::buffer(m_buff.data(), m_buff.PACKAGE_LENGTH),
                                 boost::bind(&tcp_session::Handle_Read_Com, shared_from_this(),
                                             boost::asio::placeholders::error,
                                             boost::asio::placeholders::bytes_transferred));
@@ -550,7 +574,7 @@ public:
     {
         if (!m_isOpen) return;
 
-        boost::asio::async_write(m_socket, boost::asio::buffer(pack.data(), m_buff.MAX_PACKAGE_LENGTH),
+        boost::asio::async_write(m_socket, boost::asio::buffer(pack.data(), m_buff.PACKAGE_LENGTH),
                                  boost::bind(&tcp_session::Handle_Write_Com, shared_from_this(),
                                              boost::asio::placeholders::error,
                                              boost::asio::placeholders::bytes_transferred));
@@ -593,6 +617,9 @@ private:
         // Handle for a reveice package 
         if (!error)
         {
+            // decode setup information data
+            m_buff.decode();
+
             // TODO : Hanlde read user custom
             if (m_dispatcher)
             {
@@ -815,6 +842,11 @@ public:
     }
 };
 
+/* Struct : The packet header is encoded in : 8 byte code, 24 byte data if encrypted by NetSwitchInterface*/
+
+#define switch_size_header_code   8
+#define switch_size_header_data   24
+
 class NetSwitchInterface
 {
     // Define common key
@@ -837,26 +869,6 @@ public:
     }
 
 private:
-    //int GenerateID()
-    //{
-    //    if (m_available_id.size() > 0)
-    //    {
-    //        int id = m_available_id.front();
-
-    //        m_available_id.erase(m_available_id.begin());
-
-    //        return id;
-    //    }
-
-    //    if (m_count < MAX_PLUG)
-    //    {
-    //        return m_count++;
-    //    }
-
-    //    std::cout << "ERROR : Gen id failed !" << std::endl;
-
-    //    return -1;
-    //}
 
     void DetachInfoDataTo(PLUG_DATA* plug)
     {
@@ -1032,6 +1044,9 @@ private:
 
     void ResetPlug()
     {
+        m_plugs.reserve(MAX_PLUG);
+        m_plugs.resize(MAX_PLUG);
+
         for (int i = 0; i < MAX_PLUG; i++)
         {
             delete m_plugs[i];
@@ -1055,7 +1070,6 @@ public:
     NetSwitchInterface()/*: m_gentor(MAX_PLUG)*/
     {
         m_switch_name = "";
-        m_plugs.reserve(MAX_PLUG);
         this->ResetPlug();
     }
 
@@ -1090,32 +1104,71 @@ private:
 
     enum NOTIFY_CODE
     {
-
-
+        STU,            // send to user
+        SAL,            // send all
+        CLS,            // close session
+        UKN,            // unknown
     };
 
-    NOTIFY_CODE HeaderPackage(const NetPackage& pack, std::string& data)
+    // notify code to string : struct 8 byte
+    static std::string notifycode_to_string(NOTIFY_CODE code)
     {
+        switch (code)
+        {
+            case NOTIFY_CODE::STU: return "STU____"; break;
+            case NOTIFY_CODE::SAL: return "SAL____"; break;
+            case NOTIFY_CODE::CLS: return "CLS____"; break;
+        }
+        return "UKN____";  // unknown
+    }
 
+    // notify code : 8 byte <-> input data[32]
+    static NOTIFY_CODE data_get_header_code(char* data)
+    {
+        if (!strncmp(data, notifycode_to_string(NOTIFY_CODE::STU).c_str(), switch_size_header_code))
+            return NOTIFY_CODE::STU;
+
+        else if (!strncmp(data, notifycode_to_string(NOTIFY_CODE::SAL).c_str(), switch_size_header_code))
+            return NOTIFY_CODE::SAL;
+
+        else if (!strncmp(data, notifycode_to_string(NOTIFY_CODE::CLS).c_str(), switch_size_header_code))
+            return NOTIFY_CODE::CLS;
+
+        //else if (!strncmp(data, notifycode_to_string(NOTIFY_CODE::UKN).c_str(), size_header_encode))
+        return NOTIFY_CODE::UKN;
+    }
+
+    // notify data : 24 byte <-> input data[32]
+    static std::string data_get_header_data(char* data)
+    {
+        std::string rel(switch_size_header_data, '\0');
+        memcpy_s(&data[8], switch_size_header_data, &rel[0], switch_size_header_data);
+
+        return rel;
+    }
+
+    static void EncodeHeader(NetPackage& pack, NOTIFY_CODE code, std::string data)
+    {
+        //pack.set_header_data(,)
+    }
+
+    static NOTIFY_CODE DecodeHeader(const NetPackage& pack, std::string& data)
+    {
         /* struct [8] byte : code and [32-8] byte data */
         char* data_header = NULL;
 
+        // reset data
+        NOTIFY_CODE code = NOTIFY_CODE::UKN;
+        data.clear();
+
         if (pack.get_header_data(&data_header))
         {
-            
-            if (!strncmp(data_header, "2dt", 3))
-            {
-                return NOTIFY_CODE
-            }
-            else if (!strncmp(data_header, "2dt", 3))
-            {
-
-            }
-
+            code = data_get_header_code(data_header);
+            data = data_get_header_data(data_header);
         }
         delete[] data_header;
 
-        return 
+        return code;
     }
 
 public:
@@ -1126,7 +1179,11 @@ public:
         if (is_not_null(plug) || !name.empty())
         {
             plug->m_name = name;
+
+            return true;
         }
+
+        return false;
     }
 
     virtual void Write(const NetPackage& pack)
@@ -1775,7 +1832,14 @@ private:
 
     virtual void HandleRead(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred)
     {
-        std::cout << " Server said :: >> " << session->m_buff.get_body_to_string()  << std::endl;
+        std::cout << " Server said :: >> " << std::endl;
+
+        char* temp = NULL;
+        session->m_buff.get_body_data(&temp);
+
+        PACKDATA* data = (PACKDATA*) temp;
+        delete[] temp;
+        int c = 10;
     }
 
 private:

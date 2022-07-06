@@ -20,7 +20,7 @@ int main()
 
     while (true)
     {
-        client.Write(pack);
+        //client.Write(pack);
 
         Sleep(1000);
     }

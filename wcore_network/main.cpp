@@ -54,28 +54,41 @@
 //}
 
 
+
 int main()
 {
-    //Server server;
-    //server.Config(ADDRESS, PORT, 2);
+    PACKDATA data;
+    data.a = 10;
+    data.x = 1.5;
+    data.y = 2.5;
+    data.z = 3.5;
 
-    //server.Start();
 
-    //char header[] = "header";
-    //char body[]    = "Server chao client";
+    Server server;
+    server.Config(ADDRESS, PORT, 2);
 
-    //NetPackage pack;
-    //pack.set_header_data(header, sizeof(header)/ sizeof(header[0]));
+    server.Start();
+
+    char header[] = "header";
+    char body[]    = "Server chao client";
+
+    NetPackage pack;
+    pack.set_header_data(header, sizeof(header)/ sizeof(header[0]));
     //pack.set_body_data  (body  , sizeof(body  )/ sizeof(body[0]));
 
-    //int a = 0;
-    //while (true)
-    //{
-    //    //cout << "[Server][" << a++ << "] : >>" << endl;
+    pack.set_body_data(&data, sizeof(data));
+    pack.encode();
 
-    //    server.WriteToSwitch(0, pack);
-    //    Sleep(1000);
-    //}
+    int a = 0;
+    while (true)
+    {
+        //cout << "[Server][" << a++ << "] : >>" << endl;
+
+        server.WriteToSwitch(0, pack);
+        Sleep(1000);
+    }
+
+
 
     //return 0;
 
@@ -109,10 +122,4 @@ int main()
     //int a = pack.get_body_data(&data);
 
     //cout << pack.get_body_to_string() << endl;
-    string a = " dsfdsf 23230 'c:d/fad/fasdf/fasdf' -a 'ngo van thuong' -b 120 -c sdf";
-    ArgumemtParsing arg;
-
-    arg.Parse(a);
-
-    getchar();
 }
