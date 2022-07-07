@@ -12,7 +12,6 @@
 
 #include <sstream>
 #include <string>
-#include <assert.h>
 
 using namespace std;
 using namespace boost;
@@ -20,11 +19,30 @@ using namespace boost;
 
 #define MAX_BUFF 1024
 
-#ifdef NDEBUG
-    #define assert_m(b, msg) assert
-#else 
-    #define assert_m(b, msg) assert
+//==========================================================================================
+//↓ Debug code
+#undef assert
+
+
+#ifdef _UNICODE
+#       define concate(s1, s2)      s1 ## s2
+#else
+#       define concate(s1, s2)      s2
+#endif // UNICODE
+
+#       define frefix_f(s)          concate(L,s)
+
+#ifdef _DEBUG
+#       define assert(f)            _ASSERT(f)
+#       define assert_m(f, msg)     _ASSERT_EXPR(f , frefix_f(msg))
+
+#else
+#       define assert(f) 
+#       define assert_m(f, msg)
 #endif
+//↑ Debug code
+//==========================================================================================
+
 
 #define is_null(ptr) (ptr == NULL)
 #define is_not_null(ptr) (ptr != NULL)
@@ -93,50 +111,78 @@ public:
     double  z = 0;
 };
 
+enum NetStatus
+{
+    STO  = 0x01, // send to one
+    STS  = 0x02, // send to some
+    STA  = 0x03, // send to all
+    POS  = 0x04, // poscade
+};
+
 struct NetPackage
 {
 public:
-    enum { MAX_HEADER_LENGTH  =   32 }; // ='[32 ] - [header_data]'
+    // struct information package network
+    enum { STATUS_CODE        =    4 }; 
     enum { DATA_BODY_LENGTH   =    4 }; // ='[4  ] - [length_body]'
-    enum { MAX_BODY_LENGTH    =  512 }; // ='[512] - [body_data  ]'
 
-    enum { INFO_LENGTH        =  MAX_HEADER_LENGTH + DATA_BODY_LENGTH };
-    enum { PACKAGE_LENGTH     =  MAX_HEADER_LENGTH + DATA_BODY_LENGTH + MAX_BODY_LENGTH };
+    // struct package network
+    enum { INFO_LENGTH        =  STATUS_CODE + DATA_BODY_LENGTH            };
+    enum { HEADER_LENGTH      =  32                                        }; // ='[32 ] - [header_data]'
+    enum { BODY_LENGTH        =  512                                       }; // ='[512] - [body_data  ]'
+    enum { PACKAGE_LENGTH     =  INFO_LENGTH + HEADER_LENGTH + BODY_LENGTH };
 
 private:
     // struct :     [header] + [body]
     char            m_data[PACKAGE_LENGTH];
     unsigned int    m_body_length;
+    unsigned int    m_status;
 
 private:
+    // clear data information
+    void clear_info()
+    {
+        memset(&m_data[0], 0, INFO_LENGTH);
+    }
 
     // clear data header + information data
     void clear_header()
     {
-        memset(&m_data[0], 0, INFO_LENGTH);
+        memset(&m_data[INFO_LENGTH], 0, HEADER_LENGTH);
     }
 
     // clear data body
     void clear_body()
     {
-        memset(&m_data[MAX_HEADER_LENGTH], 0, MAX_BODY_LENGTH);
+        memset(&m_data[HEADER_LENGTH], 0, BODY_LENGTH);
         m_body_length = 0;
     }
 
     // pack body length to header packet
     void pack_section_info()
     {
+        // status code
+        char data_status[STATUS_CODE + 1] = "";
+        sprintf_s(data_status, "%4d", static_cast<int>(m_status));
+        memcpy_s(&m_data[0], STATUS_CODE, data_status, STATUS_CODE);
+
+        // length body
         char data_body_length[DATA_BODY_LENGTH + 1] = "";
         sprintf_s(data_body_length, "%4d", static_cast<int>(m_body_length));
-        memcpy_s(&m_data[MAX_HEADER_LENGTH], DATA_BODY_LENGTH, data_body_length, DATA_BODY_LENGTH);
+        memcpy_s(&m_data[STATUS_CODE], DATA_BODY_LENGTH, data_body_length, DATA_BODY_LENGTH);
     }
 
     // set information packet from data reserved
     void unpack_section_info()
     {
-        char data_body_length[DATA_BODY_LENGTH];
-        memcpy_s(data_body_length, DATA_BODY_LENGTH, &m_data[MAX_HEADER_LENGTH], DATA_BODY_LENGTH);
+        // status code unpack
+        char data_status[STATUS_CODE];
+        memcpy_s(data_status, STATUS_CODE, &m_data[0], STATUS_CODE);
+        m_status = std::atoi(data_status);
 
+        // length body unpack
+        char data_body_length[DATA_BODY_LENGTH];
+        memcpy_s(data_body_length, DATA_BODY_LENGTH, &m_data[STATUS_CODE], DATA_BODY_LENGTH);
         m_body_length = std::atoi(data_body_length);
     }
 
@@ -150,7 +196,7 @@ public:
     // Get of length of package
     unsigned int length() const
     {
-        return MAX_HEADER_LENGTH + m_body_length;
+        return HEADER_LENGTH + m_body_length;
     }
 
     // Get data pointer exactlly package
@@ -162,49 +208,68 @@ public:
     // Get data header exactlly package
     int get_header_data(char** data) const
     {
-        *data = new char[MAX_HEADER_LENGTH];
-        memcpy_s(*data, MAX_HEADER_LENGTH, &m_data[0], MAX_HEADER_LENGTH);
-        return MAX_HEADER_LENGTH;
+        *data = new char[HEADER_LENGTH];
+        memcpy_s(*data, HEADER_LENGTH, &m_data[INFO_LENGTH], HEADER_LENGTH);
+        return HEADER_LENGTH;
     }
 
     std::string get_header_to_string()
     {
-        std::string tmp(MAX_HEADER_LENGTH, '\0');
-        memcpy_s(&tmp[0], MAX_HEADER_LENGTH, &m_data[0], MAX_HEADER_LENGTH);
+        std::string tmp(HEADER_LENGTH, '\0');
+        memcpy_s(&tmp[0], HEADER_LENGTH, &m_data[INFO_LENGTH], HEADER_LENGTH);
         return tmp;
     }
 
     // Get data body exactlly package
     int get_body_data(char** data) const
     {
-        *data = new char[MAX_HEADER_LENGTH];
-        memcpy_s(*data, m_body_length, &m_data[INFO_LENGTH], m_body_length);
+        *data = new char[BODY_LENGTH];
+        memcpy_s(*data, m_body_length, &m_data[HEADER_LENGTH], m_body_length);
         return m_body_length;
     }
 
     // Get message body to string 
     std::string get_body_to_string()
     {
-        return string(&m_data[INFO_LENGTH]);
+        return string(&m_data[HEADER_LENGTH]);
+    }
+
+    void set_status(int status)
+    {
+        m_status = status;
     }
 
     // Set header and body data package
-    void set_body_data(void* _data, const unsigned int _size) const = delete;
-    void set_body_data(void* _data, const unsigned int _size)
+    void set_body_data(const void* _data, const unsigned int _size) const = delete;
+    void set_body_data(const void* _data, const unsigned int _size)
     {
-        int _sizecp = (_size <= MAX_BODY_LENGTH) ? _size : MAX_BODY_LENGTH;
+        assert(_size <= BODY_LENGTH);
+
+        int _sizecp = (_size <= BODY_LENGTH) ? _size : BODY_LENGTH;
         //strncpy_s(&m_data[INFO_LENGTH], _sizecp, (char*)_data, _sizecp);
-        memcpy_s(&m_data[INFO_LENGTH], _sizecp, _data, _sizecp);
+        memcpy_s(&m_data[HEADER_LENGTH], _sizecp, _data, _sizecp);
 
         m_body_length = _sizecp;
     }
 
-    void set_header_data(void* _data, const unsigned int _size) const = delete;
-    void set_header_data(void* _data, const unsigned int _size)
+    void set_header_data(const void* _data, const unsigned int _size) const = delete;
+    void set_header_data(const void* _data, const unsigned int _size)
     {
-        int _sizecp = (_size <= MAX_HEADER_LENGTH) ? _size : MAX_HEADER_LENGTH;
+        assert(_size <= HEADER_LENGTH);
+
+        int _sizecp = (_size <= HEADER_LENGTH) ? _size : HEADER_LENGTH;
+        memcpy_s(&m_data[INFO_LENGTH], _size, _data, _sizecp);
+
         //strncpy_s(&m_data[0], _sizecp, (char*)_data, _sizecp);
-        memcpy_s(&m_data[0], _sizecp, _data, _sizecp);
+    }
+
+    void set_header_offset_data(const void* _data, const unsigned int _off, const unsigned int _size)
+    {
+        int _sizecheck = _off + _size;
+        assert(_sizecheck <= HEADER_LENGTH);
+
+        int _sizecp = _sizecheck <= HEADER_LENGTH ? _size : (HEADER_LENGTH - _off);
+        memcpy_s(&m_data[INFO_LENGTH + _off], _sizecp, _data, _sizecp);
     }
 
     // Clear all data in package
@@ -560,6 +625,11 @@ public:
 
     void ResetBuffer() { m_buff.clear(); }
 
+    const NetPackage& GetBuffer() const
+    {
+        return m_buff;
+    }
+
     void Read()
     {
         if (!m_isOpen) return;
@@ -570,11 +640,14 @@ public:
                                             boost::asio::placeholders::bytes_transferred));
     }
 
-    void Write(const NetPackage& pack)
+    void Write(NetPackage& pack)
     {
         if (!m_isOpen) return;
 
-        boost::asio::async_write(m_socket, boost::asio::buffer(pack.data(), m_buff.PACKAGE_LENGTH),
+        // @_@ packing information before sending
+        pack.encode();
+
+        boost::asio::async_write(m_socket, boost::asio::buffer(pack.data(), pack.PACKAGE_LENGTH),
                                  boost::bind(&tcp_session::Handle_Write_Com, shared_from_this(),
                                              boost::asio::placeholders::error,
                                              boost::asio::placeholders::bytes_transferred));
@@ -857,6 +930,17 @@ private:
 
     vector<PLUG_DATA*>   m_plugs;
 
+private:
+    void (*fun_call_handle_read)(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred) = NULL;
+
+public: // get - set don't care
+
+    void SetHandleReadFunc(void (*fun_handle)(const tcp_session_ptr, const tcp_error& , size_t ))
+    {
+        fun_call_handle_read = fun_handle;
+    }
+
+
 public:
     static const string SWITCH_KEY_DATA()
     {
@@ -869,6 +953,11 @@ public:
     }
 
 private:
+
+    std::string GenPlugKeyID(const tcp_session_ptr& session)
+    {
+        return KGenerator::from_ptr(session, KGenerator::from_ptr(this));
+    }
 
     void DetachInfoDataTo(PLUG_DATA* plug)
     {
@@ -966,7 +1055,7 @@ private:
         PLUG_DATA* plug = new PLUG_DATA();
         plug->m_session = session;
         plug->m_active  = true;
-        plug->m_id      = KGenerator::from_ptr(session, KGenerator::from_ptr(this));
+        plug->m_id      = GenPlugKeyID(session);
 
 
         m_plugs[index_free] = plug;
@@ -1101,79 +1190,112 @@ private:
 
     }
 
-
+public:
     enum NOTIFY_CODE
     {
         STU,            // send to user
         SAL,            // send all
+        REN,            // rename user
         CLS,            // close session
         UKN,            // unknown
     };
 
     // notify code to string : struct 8 byte
-    static std::string notifycode_to_string(NOTIFY_CODE code)
+    static std::string code_to_string(NOTIFY_CODE code)
     {
         switch (code)
         {
-            case NOTIFY_CODE::STU: return "STU____"; break;
-            case NOTIFY_CODE::SAL: return "SAL____"; break;
-            case NOTIFY_CODE::CLS: return "CLS____"; break;
+            case NOTIFY_CODE::STU: return "STU_____"; break;
+            case NOTIFY_CODE::SAL: return "SAL_____"; break;
+            case NOTIFY_CODE::REN: return "REN_____"; break;
+            case NOTIFY_CODE::CLS: return "CLS_____"; break;
         }
-        return "UKN____";  // unknown
+        return "UKN_____";  // unknown
     }
 
     // notify code : 8 byte <-> input data[32]
     static NOTIFY_CODE data_get_header_code(char* data)
     {
-        if (!strncmp(data, notifycode_to_string(NOTIFY_CODE::STU).c_str(), switch_size_header_code))
+        if (!strncmp(data, code_to_string(NOTIFY_CODE::STU).c_str(), switch_size_header_code))
             return NOTIFY_CODE::STU;
 
-        else if (!strncmp(data, notifycode_to_string(NOTIFY_CODE::SAL).c_str(), switch_size_header_code))
+        else if (!strncmp(data, code_to_string(NOTIFY_CODE::SAL).c_str(), switch_size_header_code))
             return NOTIFY_CODE::SAL;
 
-        else if (!strncmp(data, notifycode_to_string(NOTIFY_CODE::CLS).c_str(), switch_size_header_code))
+        else if (!strncmp(data, code_to_string(NOTIFY_CODE::REN).c_str(), switch_size_header_code))
+            return NOTIFY_CODE::REN;
+
+        else if (!strncmp(data, code_to_string(NOTIFY_CODE::CLS).c_str(), switch_size_header_code))
             return NOTIFY_CODE::CLS;
 
-        //else if (!strncmp(data, notifycode_to_string(NOTIFY_CODE::UKN).c_str(), size_header_encode))
+        //else if (!strncmp(data, code_to_string(NOTIFY_CODE::UKN).c_str(), size_header_encode))
         return NOTIFY_CODE::UKN;
     }
 
-    // notify data : 24 byte <-> input data[32]
-    static std::string data_get_header_data(char* data)
+    // notify data : 24 byte <-> input data[32] || *free when use
+    static void* data_get_header_data(char* data)
     {
-        std::string rel(switch_size_header_data, '\0');
-        memcpy_s(&data[8], switch_size_header_data, &rel[0], switch_size_header_data);
+        //std::string rel(switch_size_header_data, '\0');
+
+        char* rel = new char[switch_size_header_data];
+        memcpy_s(&data[switch_size_header_code], switch_size_header_data, &rel[0], switch_size_header_data);
 
         return rel;
     }
 
     static void EncodeHeader(NetPackage& pack, NOTIFY_CODE code, std::string data)
     {
-        //pack.set_header_data(,)
+        std::string strcode = code_to_string(code);
+        const char* str = strcode.c_str();
+        const char* strdata = data.c_str();
+
+        pack.set_header_offset_data((const void*)str    , 0, 8);
+        pack.set_header_offset_data((const void*)strdata, 8, data.length());
     }
 
-    static NOTIFY_CODE DecodeHeader(const NetPackage& pack, std::string& data)
+    static NOTIFY_CODE DecodeHeaderPackage(const NetPackage& pack, void** data)
     {
         /* struct [8] byte : code and [32-8] byte data */
         char* data_header = NULL;
 
         // reset data
         NOTIFY_CODE code = NOTIFY_CODE::UKN;
-        data.clear();
+        *data            = NULL;
 
         if (pack.get_header_data(&data_header))
         {
-            code = data_get_header_code(data_header);
-            data = data_get_header_data(data_header);
+            code  = data_get_header_code(data_header);
+            *data = data_get_header_data(data_header);
         }
         delete[] data_header;
 
         return code;
     }
 
-public:
-    virtual bool ChangeName(const std::string& id, std::string name)
+// Function process notify dispatch <-> command
+private: 
+    virtual NetPackage CreateResponsePackage(NOTIFY_CODE code, const NetPackage& packold)
     {
+        NetPackage response;
+
+        switch (code)
+        {
+            case NetSwitchInterface::STU:
+            {
+                response.set_status(NetStatus::STO);
+                response.set_header_offset_data()
+
+                break;
+            }
+            default:
+                break;
+        }
+    }
+
+    virtual bool Rename(const tcp_session_ptr& session, std::string name)
+    {
+        std::string id  = GenPlugKeyID(session);
+
         PLUG_DATA* plug = GetPlugData(id);
 
         if (is_not_null(plug) || !name.empty())
@@ -1186,7 +1308,14 @@ public:
         return false;
     }
 
-    virtual void Write(const NetPackage& pack)
+    virtual void Close(const tcp_session_ptr& session)
+    {
+        this->PlugOut(session);
+    }
+
+public:
+
+    virtual void Write(NetPackage& pack)
     {
         for (int i = 0; i < MAX_PLUG; i++)
         {
@@ -1197,7 +1326,7 @@ public:
         }
     }
 
-    virtual void WriteTo(const std::string& id, const NetPackage& pack)
+    virtual void WriteTo(const std::string& id, NetPackage& pack)
     {
         PLUG_DATA* plug = GetPlugData(id);
 
@@ -1209,8 +1338,48 @@ public:
 
     virtual void Read(const tcp_session_ptr session, const tcp_error& error, size_t bytes_transferred)
     {
-        std::cout << "[ >> Switch process ] Read data" << endl;
-        this->HandleReadCom(session, error, bytes_transferred);
+        NetPackage pack = session->GetBuffer();
+        void* data = NULL;
+        NOTIFY_CODE code = DecodeHeaderPackage(pack, &data);
+
+        switch (code)
+        {
+            case NetSwitchInterface::STU:
+            {
+                std::string id = static_cast<char*>(data);
+                this->WriteTo(id, pack);
+                break;
+            }
+            case NetSwitchInterface::SAL:
+            {
+                this->Write(pack);
+                break;
+            }
+            case NetSwitchInterface::REN:
+            {
+
+                this->Rename(session, "");
+                break;
+            }
+            case NetSwitchInterface::CLS:
+            {
+                break;
+            }
+
+            case NetSwitchInterface::UKN:
+            {
+                break;
+            }
+            default:
+                break;
+        }
+
+        delete[] data;
+
+        if (is_not_null(fun_call_handle_read))
+        {
+            fun_call_handle_read(session, error, bytes_transferred);
+        }
     }
 
 
@@ -1247,6 +1416,15 @@ public:
         std::stringstream ss;
         ss << session.get();
         return ss.str();
+    }
+
+    tcp_session_ptr GetSession(const std::string key)
+    {
+        if (IsExist(key))
+        {
+            return m_data[key];
+        }
+        return NULL;
     }
 
 public:
@@ -1432,6 +1610,11 @@ public:
         return m_switch_manager.GetAt(keyID);
     }
 
+    tcp_session_ptr GetSession(const std::string keyID)
+    {
+        return m_session_manager.GetSession(keyID);
+    }
+
     ArrayNetSwitch* GetListSwitchOf(const tcp_session_ptr& session)
     {
         void* switch_info = session->GetUserData(NetSwitchInterface::SWITCH_KEY_DATA());
@@ -1603,7 +1786,7 @@ public:
 
 public:
 
-    void Write(const NetPackage& pack)
+    void Write(NetPackage& pack)
     {
         auto session = m_database.GetFirstSession();
         if (tcp_session::IsActive(session))
@@ -1612,7 +1795,16 @@ public:
         }
     }
 
-    void WriteToSwitch(int switch_id, const NetPackage& pack)
+    void WriteTo(const std::string session_id, NetPackage& pack)
+    {
+        auto session = m_database.GetSession(session_id);
+        if (tcp_session::IsActive(session))
+        {
+            session->Write(pack);
+        }
+    }
+
+    void WriteToSwitch(const int switch_id, NetPackage& pack)
     {
         auto swit = m_database.GetSwitch(switch_id);
         if (NetSwitchInterface::IsActive(swit))
@@ -1733,7 +1925,7 @@ public:
 
     }
 
-    void Write(const NetPackage& pack)
+    void Write(NetPackage& pack)
     {
         //if (!m_tcp_session->m_isOpen) return;
 

@@ -73,20 +73,20 @@ int main()
     char body[]    = "Server chao client";
 
     NetPackage pack;
-    pack.set_header_data(header, sizeof(header)/ sizeof(header[0]));
+    //pack.set_header_data(header, sizeof(header)/ sizeof(header[0]));
     //pack.set_body_data  (body  , sizeof(body  )/ sizeof(body[0]));
+    NetSwitchInterface::EncodeHeader(pack, NetSwitchInterface::NOTIFY_CODE::SAL, "on khong");
 
     pack.set_body_data(&data, sizeof(data));
-    pack.encode();
 
-    int a = 0;
-    while (true)
-    {
-        //cout << "[Server][" << a++ << "] : >>" << endl;
+    //int a = 0;
+    //while (true)
+    //{
+    //    //cout << "[Server][" << a++ << "] : >>" << endl;
 
-        server.WriteToSwitch(0, pack);
-        Sleep(1000);
-    }
+    //    server.WriteToSwitch(0, pack);
+    //    Sleep(1000);
+    //}
 
 
 
